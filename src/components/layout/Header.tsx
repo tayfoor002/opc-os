@@ -1,0 +1,8 @@
+import { Bell, CalendarDays, LogOut, Search, Sparkles } from "lucide-react";
+import { logout } from "@/app/auth/actions";
+import { createClient } from "@/lib/supabase/server";
+import { APP_VERSION } from "@/constants/app";
+export async function Header(){ const supabase=await createClient(); const {data:{user}}=await supabase.auth.getUser(); return <header className="sticky top-0 z-20 flex min-h-20 items-center justify-between gap-4 border-b bg-white/95 px-6 py-3">
+<div className="hidden w-full max-w-xl items-center gap-3 rounded-xl border bg-slate-50 px-4 py-2.5 md:flex"><Search className="h-4 w-4 text-slate-400"/><input placeholder="Rechercher un planning, document, tâche ou zone..." className="w-full bg-transparent text-sm outline-none"/></div>
+<div className="ml-auto flex items-center gap-2"><button className="hidden items-center gap-2 rounded-xl border border-red-200 px-4 py-2 text-sm font-black text-[var(--opc-red)] sm:flex"><Sparkles className="h-4 w-4"/>AI Copilot</button><button className="grid h-10 w-10 place-items-center rounded-xl border"><CalendarDays className="h-4 w-4"/></button><button className="relative grid h-10 w-10 place-items-center rounded-xl border"><Bell className="h-4 w-4"/><span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--opc-red)]"/></button><div className="hidden max-w-48 px-2 text-right xl:block"><p className="truncate text-xs font-black">{user?.email??'Utilisateur'}</p><p className="text-[10px] text-slate-400">Session active</p></div><form action={logout}><button title="Se déconnecter" className="grid h-10 w-10 place-items-center rounded-xl border hover:bg-red-50 hover:text-[var(--opc-red)]"><LogOut className="h-4 w-4"/></button></form></div>
+</header>; }
