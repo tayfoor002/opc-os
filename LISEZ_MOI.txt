@@ -1,0 +1,23 @@
+OPC OS — Sprint 14.1 — Timeline Drag & Drop multi-échelle
+
+Installation
+1. Arrêter l'application avec Ctrl+C.
+2. Copier le dossier src du ZIP à la racine du projet.
+3. Accepter le remplacement du fichier PlanningWorkspace.tsx.
+4. Relancer depuis CMD : npm run dev
+5. Ouvrir Planning puis la première vue "Semaine".
+
+Nouveautés
+- Boutons Jour / Semaine / Mois / Année dans la Timeline glisser-déposer.
+- Navigation précédente / suivante selon l'échelle.
+- Bouton Aujourd'hui · J+0.
+- Ligne verticale J+0 dans la Timeline.
+- Les activités occupent toute leur durée.
+- Le glisser-déposer conserve la durée et met à jour start_date / finish_date dans Supabase.
+- En Semaine, Mois et Année, le dépôt aligne le début de l'activité sur le début de la période choisie.
+
+SQL Supabase
+Aucun script SQL supplémentaire n'est nécessaire.
+
+Validation
+Le code Planning et TypeScript compile correctement. Le build global atteint la génération des pages puis s'arrête sur un problème déjà présent dans /tasks (useSearchParams sans Suspense), sans rapport avec cette modification.
