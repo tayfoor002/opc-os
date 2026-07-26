@@ -1,19 +1,34 @@
-type DocumentItem = {
-  id: string;
-  reference: string | null;
-  title: string;
-  revision: string | null;
-  status: string | null;
-  category: string | null;
-};
+import Link from "next/link";
+
+import type { DocumentListItem } from "@/lib/documents/queries";
 
 type DocumentTableProps = {
-  documents: DocumentItem[];
+  documents: DocumentListItem[];
 };
 
-export function DocumentTable({
-  documents,
-}: DocumentTableProps) {
+const columns: Array<{
+  key: keyof Omit<DocumentListItem, "id">;
+  label: string;
+}> = [
+  { key: "reference", label: "Référence" },
+  { key: "title", label: "Titre" },
+  { key: "category", label: "Catégorie" },
+  { key: "revision", label: "Révision" },
+  { key: "status", label: "Statut" },
+];
+
+function getCellValue(
+  document: DocumentListItem,
+  key: keyof Omit<DocumentListItem, "id">,
+): string {
+  if (key === "status") {
+    return document.status ?? "Non défini";
+  }
+
+  return document[key] ?? "—";
+}
+
+export function DocumentTable({ documents }: DocumentTableProps) {
   if (documents.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-[var(--opc-border)] bg-white p-10 text-center">
@@ -31,11 +46,11 @@ export function DocumentTable({
         <table className="min-w-full text-left">
           <thead className="bg-slate-50 text-xs uppercase tracking-wider text-[var(--opc-muted)]">
             <tr>
-              <th className="px-5 py-4">Référence</th>
-              <th className="px-5 py-4">Titre</th>
-              <th className="px-5 py-4">Catégorie</th>
-              <th className="px-5 py-4">Révision</th>
-              <th className="px-5 py-4">Statut</th>
+              {columns.map((column) => (
+                <th key={column.key} className="px-5 py-4">
+                  {column.label}
+                </th>
+              ))}
             </tr>
           </thead>
 
@@ -43,29 +58,36 @@ export function DocumentTable({
             {documents.map((document) => (
               <tr
                 key={document.id}
-                className="hover:bg-slate-50"
+                className="group transition-colors hover:bg-slate-50 focus-within:bg-slate-50"
               >
-                <td className="px-5 py-4 font-semibold">
-                  {document.reference ?? "—"}
-                </td>
-
-                <td className="px-5 py-4">
-                  {document.title}
-                </td>
-
-                <td className="px-5 py-4">
-                  {document.category ?? "—"}
-                </td>
-
-                <td className="px-5 py-4">
-                  {document.revision ?? "—"}
-                </td>
-
-                <td className="px-5 py-4">
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">
-                    {document.status ?? "Non défini"}
-                  </span>
-                </td>
+                {columns.map((column) => (
+                  <td
+                    key={column.key}
+                    className={
+                      column.key === "reference"
+                        ? "p-0 font-semibold"
+                        : "p-0"
+                    }
+                  >
+                    <Link
+                      href={`/documents/${document.id}`}
+                      className="block px-5 py-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--opc-blue)]"
+                      aria-label={
+                        column.key === "title"
+                          ? `Voir le document ${document.title}`
+                          : undefined
+                      }
+                    >
+                      {column.key === "status" ? (
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">
+                          {getCellValue(document, column.key)}
+                        </span>
+                      ) : (
+                        getCellValue(document, column.key)
+                      )}
+                    </Link>
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>

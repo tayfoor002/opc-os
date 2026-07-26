@@ -14,7 +14,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="fr" className={cn("font-sans", inter.variable)}>
-      <body><SplashScreen />{children}</body>
+      <body suppressHydrationWarning>
+        <SplashScreen />
+        {children}
+      </body>
     </html>
   );
 }

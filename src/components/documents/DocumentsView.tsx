@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { DocumentListItem } from "@/lib/documents/queries";
 
 type Project = {
   id: string;
@@ -20,7 +21,7 @@ type Project = {
 };
 
 type Props = {
-  documents: any[];
+  documents: DocumentListItem[];
   projects: Project[];
 };
 
@@ -34,7 +35,7 @@ export function DocumentsView({ documents, projects }: Props) {
       <DocumentTable documents={documents} />
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Nouveau document</DialogTitle>
           </DialogHeader>
