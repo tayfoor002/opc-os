@@ -1,13 +1,20 @@
 import { AppLayout } from "@/components/layout/AppLayout";
+import { DocumentsView } from "@/components/documents/DocumentsView";
+import { getDocuments } from "@/lib/documents/queries";
+import { getProjects } from "@/lib/projects/queries";
 
-export default function Page() {
+export default async function DocumentsPage() {
+  const [documents, projects] = await Promise.all([
+    getDocuments(),
+    getProjects(),
+  ]);
+
   return (
     <AppLayout>
-      <section className="rounded-2xl border border-[var(--opc-border)] bg-white p-8 shadow-sm">
-        <p className="text-sm font-black uppercase tracking-[0.18em] text-[var(--opc-blue)]">Prochain sprint</p>
-        <h1 className="mt-2 text-4xl font-black">Documents</h1>
-        <p className="mt-3 text-[var(--opc-muted)]">Ce module sera construit dans un prochain sprint.</p>
-      </section>
+      <DocumentsView
+        documents={documents}
+        projects={projects}
+      />
     </AppLayout>
   );
 }
