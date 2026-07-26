@@ -1,68 +1,60 @@
-# OPC OS v0.10.3
+# OPC OS V2
 
-1. `npm.cmd install`
-2. Copy `.env.example` to `.env.local` and fill Supabase URL/key.
-3. Run `supabase/setup.sql` in Supabase SQL Editor.
-4. Create a user in Supabase Authentication > Users.
-5. `npm.cmd run dev`
+Version applicative de travail basée sur Next.js 16, TypeScript et Supabase.
 
+## Contenu
 
-## Sprint 007 additions
+- Dashboard
+- Zones
+- Phases (schéma de données)
+- Activités
+- Documents
+- Matériels / Équipements
+- Photos et réserves dans la base
+- Moteur de relations générique `object_links`
+- Migration SQL Supabase
+- Données de démonstration
 
-- Splash screen appears once per browser session
-- About page available from sidebar
-- Copyright on login and sidebar
-- Smaller Alstom logo
-- Version and professional signature visible
+## Installation
 
-
-## Sprint 008
-
-The login screen now matches the validated blue/white Alstom-inspired interface.
-The copyright and professional signature are visible directly on the login screen.
-
-
-## Sprint 009 setup
-
-The `.env.local` file is already included.
-Run `supabase/sprint_009_activities.sql` once in Supabase SQL Editor.
-Then run:
-
-```powershell
-npm.cmd install
-npm.cmd run dev
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
 ```
 
-Open `/activities` or click Activities in the sidebar.
+Puis ouvrir `http://localhost:3000`.
 
+## Variables d'environnement
 
-## Sprint 010
-Aucune migration SQL.
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://VOTRE_PROJET.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=VOTRE_CLE_PUBLISHABLE
+```
 
+Ne jamais ajouter `.env.local` au dépôt Git.
 
-## 0.10.1
-Professional rail engineering login illustration; no SQL migration required.
+## Base Supabase
 
+Dans Supabase SQL Editor, exécuter dans l'ordre :
 
-## 0.10.2
-Minimalist login background; no SQL migration required.
+1. `supabase/migrations/001_opc_os_v2.sql`
+2. `supabase/seed.sql` (facultatif)
 
+## Architecture métier
 
-## 0.10.3
-Approved blueprint login background integrated. No SQL migration required.
+```text
+Projet
+└── Zone
+    └── Phase
+        └── Activité
+            ├── Documents
+            ├── Matériels
+            ├── Photos
+            ├── Réserves
+            └── Relations
+```
 
-## Sprint 012 — Tasks Control Center
+## Important
 
-1. Open Supabase > SQL Editor.
-2. Run `supabase/sprint_012_tasks.sql` once.
-3. Restart the app with `npm run dev`.
-4. Open `/tasks` or click **Tasks** in the sidebar.
-
-Included:
-- task CRUD;
-- owner, deadline, priority and status;
-- links between Tasks and Activities;
-- overdue detection and KPI cards;
-- filters by status, owner and activity;
-- realtime refresh through Supabase;
-- task count visible in Activities.
+Ce pack est une base V2 autonome. Il ne remplace pas automatiquement un dépôt existant sans fusion du code et vérification de ses tables actuelles.
