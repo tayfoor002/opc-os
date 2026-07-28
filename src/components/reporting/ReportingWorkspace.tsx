@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -16,10 +16,10 @@ import {
 import { getTaskProgressPhotoUrls } from "@/app/tasks/actions";
 import { createClient } from "@/lib/supabase/client";
 import {
-  downloadReportPdf,
   downloadReportWord,
   type ReportExportData,
 } from "@/lib/reporting/exports";
+import { downloadReportPdf } from "@/lib/reporting/pdf-export";
 import type { Activity } from "@/types/activity";
 import type { CollaboratorOption, ZoneElementOption } from "@/types/organization";
 
@@ -113,7 +113,6 @@ export function ReportingWorkspace() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState<"pdf" | "word" | null>(null);
-  const reportRef = useRef<HTMLElement>(null);
 
   async function loadReporting() {
     setLoading(true);
@@ -370,12 +369,11 @@ export function ReportingWorkspace() {
   }
 
   async function exportPdf() {
-    if (!reportRef.current) return;
     setExporting("pdf");
     setError("");
     try {
       await downloadReportPdf(
-        reportRef.current,
+        buildExportData(),
         `rapport-${type}-pdd-${referenceDate}.pdf`,
       );
     } catch (exportError) {
@@ -455,7 +453,7 @@ export function ReportingWorkspace() {
       {loading ? <div className="grid min-h-80 place-items-center"><Loader2 className="h-8 w-8 animate-spin text-[var(--opc-blue)]" /></div> : null}
 
       {!loading ? (
-        <article ref={reportRef} className="report-sheet mt-6 overflow-hidden rounded-2xl border border-[var(--opc-border)] bg-white shadow-lg">
+        <article className="report-sheet mt-6 overflow-hidden rounded-2xl border border-[var(--opc-border)] bg-white shadow-lg">
           <header className="grid min-h-28 grid-cols-[180px_1fr_180px] items-center gap-5 bg-[var(--opc-red)] px-6 py-5 text-white">
             <div className="flex h-16 items-center justify-center rounded-lg bg-white p-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
