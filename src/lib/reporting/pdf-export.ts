@@ -2,20 +2,39 @@
 
 import type { ReportExportData } from "./exports";
 
-type PdfImage = { bytes: Uint8Array; format: "PNG" | "JPEG" };
+type PdfImage = {
+  bytes: Uint8Array;
+  format: "PNG" | "JPEG";
+  width: number;
+  height: number;
+};
 
-async function loadPdfImage(path: string): Promise<PdfImage> {
+async function loadPdfImage(
+  path: string,
+  monochromeWhite = false,
+): Promise<PdfImage> {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`Image indisponible : ${path}`);
   const blob = await response.blob();
-  if (blob.type.includes("webp")) {
-    const bitmap = await createImageBitmap(blob);
+  const bitmap = await createImageBitmap(blob);
+  if (blob.type.includes("webp") || monochromeWhite) {
     const canvas = document.createElement("canvas");
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Conversion WebP impossible.");
     context.drawImage(bitmap, 0, 0);
+    if (monochromeWhite) {
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      for (let index = 0; index < pixels.data.length; index += 4) {
+        if (pixels.data[index + 3] > 0) {
+          pixels.data[index] = 255;
+          pixels.data[index + 1] = 255;
+          pixels.data[index + 2] = 255;
+        }
+      }
+      context.putImageData(pixels, 0, 0);
+    }
     const converted = await new Promise<Blob>((resolve, reject) =>
       canvas.toBlob(
         (value) =>
@@ -26,11 +45,31 @@ async function loadPdfImage(path: string): Promise<PdfImage> {
     return {
       bytes: new Uint8Array(await converted.arrayBuffer()),
       format: "PNG",
+      width: bitmap.width,
+      height: bitmap.height,
     };
   }
   return {
     bytes: new Uint8Array(await blob.arrayBuffer()),
     format: blob.type.includes("jpeg") ? "JPEG" : "PNG",
+    width: bitmap.width,
+    height: bitmap.height,
+  };
+}
+
+function fitInside(
+  sourceWidth: number,
+  sourceHeight: number,
+  maximumWidth: number,
+  maximumHeight: number,
+) {
+  const ratio = Math.min(
+    maximumWidth / sourceWidth,
+    maximumHeight / sourceHeight,
+  );
+  return {
+    width: sourceWidth * ratio,
+    height: sourceHeight * ratio,
   };
 }
 
@@ -63,7 +102,7 @@ export async function downloadReportPdf(
   let logo: PdfImage | null = null;
 
   try {
-    logo = await loadPdfImage("/alstom-logo.png");
+    logo = await loadPdfImage("/alstom-logo.png", true);
   } catch {
     // The text fallback below keeps the report usable without the asset.
   }
@@ -80,7 +119,15 @@ export async function downloadReportPdf(
       align: "center",
     });
     if (logo) {
-      pdf.addImage(logo.bytes, logo.format, margin, 4, 27, 12);
+      const dimensions = fitInside(logo.width, logo.height, 34, 13);
+      pdf.addImage(
+        logo.bytes,
+        logo.format,
+        margin,
+        (23 - dimensions.height) / 2,
+        dimensions.width,
+        dimensions.height,
+      );
     } else {
       pdf.text("ALSTOM", margin, 13);
     }
@@ -156,7 +203,10 @@ export async function downloadReportPdf(
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
   pdf.text(data.periodRange, pageWidth / 2, y + 18, { align: "center" });
-  y += 25;
+  pdf.setFont("helvetica", "bold");
+  pdf.setTextColor(...red);
+  pdf.text(data.scopeTitle, pageWidth / 2, y + 23, { align: "center" });
+  y += 30;
 
   section(1, "SYNTHÈSE EXÉCUTIVE");
   const metrics: Array<[string, string | number]> = [
@@ -193,7 +243,19 @@ export async function downloadReportPdf(
       size: 9,
     });
   }
+  let currentZone = "";
   for (const activity of data.activities) {
+    if (activity.zone !== currentZone) {
+      currentZone = activity.zone;
+      ensure(14);
+      pdf.setFillColor(...red);
+      pdf.roundedRect(margin, y, contentWidth, 9, 1.5, 1.5, "F");
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(9);
+      pdf.text(`ZONE : ${currentZone.toUpperCase()}`, margin + 4, y + 6);
+      y += 13;
+    }
     ensure(28);
     pdf.setFillColor(...navy);
     pdf.roundedRect(margin, y, contentWidth, 11, 1.5, 1.5, "F");
@@ -288,7 +350,20 @@ export async function downloadReportPdf(
       pdf.roundedRect(x, y, cardWidth, 67, 2, 2, "FD");
       try {
         const image = await loadPdfImage(photo.url);
-        pdf.addImage(image.bytes, image.format, x + 3, y + 3, cardWidth - 6, 43);
+        const dimensions = fitInside(
+          image.width,
+          image.height,
+          cardWidth - 6,
+          43,
+        );
+        pdf.addImage(
+          image.bytes,
+          image.format,
+          x + (cardWidth - dimensions.width) / 2,
+          y + 3 + (43 - dimensions.height) / 2,
+          dimensions.width,
+          dimensions.height,
+        );
       } catch {
         pdf.setTextColor(...slate);
         pdf.setFontSize(8);

@@ -13,6 +13,7 @@ export type ExportTask = {
 };
 
 export type ExportActivity = {
+  zone: string;
   code: string;
   name: string;
   location: string;
@@ -34,6 +35,7 @@ export type ReportExportData = {
   reportTitle: string;
   periodTitle: string;
   periodRange: string;
+  scopeTitle: string;
   metrics: {
     completed: number;
     inProgress: number;
@@ -203,8 +205,8 @@ async function loadImage(path: string) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`Image indisponible : ${path}`);
   const blob = await response.blob();
+  const bitmap = await createImageBitmap(blob);
   if (blob.type.includes("webp")) {
-    const bitmap = await createImageBitmap(blob);
     const canvas = window.document.createElement("canvas");
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
@@ -221,12 +223,26 @@ async function loadImage(path: string) {
     return {
       bytes: new Uint8Array(await pngBlob.arrayBuffer()),
       type: "png" as const,
+      width: bitmap.width,
+      height: bitmap.height,
     };
   }
   return {
     bytes: new Uint8Array(await blob.arrayBuffer()),
     type: blob.type.includes("jpeg") ? ("jpg" as const) : ("png" as const),
+    width: bitmap.width,
+    height: bitmap.height,
   };
+}
+
+function fitImage(
+  width: number,
+  height: number,
+  maximumWidth: number,
+  maximumHeight: number,
+) {
+  const ratio = Math.min(maximumWidth / width, maximumHeight / height);
+  return { width: width * ratio, height: height * ratio };
 }
 
 export async function downloadReportWord(
@@ -264,6 +280,12 @@ export async function downloadReportWord(
     insideVertical: border,
   };
   const alstomLogo = await loadImage("/alstom-logo.png");
+  const alstomLogoSize = fitImage(
+    alstomLogo.width,
+    alstomLogo.height,
+    105,
+    38,
+  );
   const whiteCell = (children: InstanceType<typeof Paragraph>[]) =>
     new TableCell({
       children,
@@ -333,7 +355,7 @@ export async function downloadReportWord(
                   new ImageRun({
                     data: alstomLogo.bytes,
                     type: alstomLogo.type,
-                    transformation: { width: 105, height: 38 },
+                    transformation: alstomLogoSize,
                   }),
                 ],
               }),
@@ -409,9 +431,21 @@ export async function downloadReportWord(
     }),
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { after: 220 },
+      spacing: { after: 60 },
       children: [
         new TextRun({ text: data.periodRange, color: "64748B", size: 17 }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 220 },
+      children: [
+        new TextRun({
+          text: data.scopeTitle,
+          bold: true,
+          color: red,
+          size: 18,
+        }),
       ],
     }),
     sectionTitle("1. SYNTHÈSE EXÉCUTIVE"),
@@ -444,7 +478,25 @@ export async function downloadReportWord(
     sectionTitle("2. DÉTAIL DES ACTIVITÉS ET TÂCHES"),
   ];
 
+  let currentWordZone = "";
   for (const activity of data.activities) {
+    if (activity.zone !== currentWordZone) {
+      currentWordZone = activity.zone;
+      children.push(
+        new Paragraph({
+          spacing: { before: 220, after: 100 },
+          shading: { fill: red, type: ShadingType.CLEAR },
+          children: [
+            new TextRun({
+              text: `ZONE : ${currentWordZone.toUpperCase()}`,
+              bold: true,
+              color: "FFFFFF",
+              size: 21,
+            }),
+          ],
+        }),
+      );
+    }
     children.push(
       new Paragraph({
         spacing: { before: 180, after: 70 },
@@ -462,7 +514,7 @@ export async function downloadReportWord(
         spacing: { after: 90 },
         children: [
           new TextRun({
-            text: `${activity.location} | Alstom: ${activity.alstom} | Avanzit: ${activity.avanzit}`,
+            text: `${activity.zone} | ${activity.location} | Alstom: ${activity.alstom} | Avanzit: ${activity.avanzit}`,
             color: "475569",
             size: 17,
           }),
@@ -522,6 +574,7 @@ export async function downloadReportWord(
       const photoCells = await Promise.all(
         data.photos.slice(index, index + 2).map(async (photo, offset) => {
           const image = await loadImage(photo.url);
+          const photoSize = fitImage(image.width, image.height, 300, 205);
           return new TableCell({
             children: [
               new Paragraph({
@@ -530,7 +583,7 @@ export async function downloadReportWord(
                   new ImageRun({
                     data: image.bytes,
                     type: image.type,
-                    transformation: { width: 300, height: 205 },
+                    transformation: photoSize,
                   }),
                 ],
               }),

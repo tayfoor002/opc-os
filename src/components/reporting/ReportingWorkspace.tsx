@@ -21,7 +21,11 @@ import {
 } from "@/lib/reporting/exports";
 import { downloadReportPdf } from "@/lib/reporting/pdf-export";
 import type { Activity } from "@/types/activity";
-import type { CollaboratorOption, ZoneElementOption } from "@/types/organization";
+import type {
+  CollaboratorOption,
+  ZoneElementOption,
+  ZoneOption,
+} from "@/types/organization";
 
 type ReportType = "daily" | "weekly" | "monthly";
 type ReportTask = {
@@ -63,40 +67,38 @@ function isoDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-function periodFor(type: ReportType, reference: string) {
-  const date = new Date(`${reference}T12:00:00`);
-  if (type === "daily") return { start: reference, end: reference };
-  if (type === "monthly") {
-    return {
-      start: isoDate(new Date(date.getFullYear(), date.getMonth(), 1)),
-      end: isoDate(new Date(date.getFullYear(), date.getMonth() + 1, 0)),
-    };
-  }
-  const day = date.getDay() || 7;
-  const start = new Date(date);
-  start.setDate(date.getDate() - day + 1);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  return { start: isoDate(start), end: isoDate(end) };
+function addDays(value: string, days: number) {
+  const date = new Date(`${value}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return isoDate(date);
 }
 
-function periodSubtitle(type: ReportType, reference: string) {
-  const date = new Date(`${reference}T12:00:00`);
-  const month = new Intl.DateTimeFormat("fr-FR", {
+function defaultPeriod(type: ReportType, reference: string) {
+  if (type === "daily") return { start: reference, end: reference };
+  return {
+    start: reference,
+    end: addDays(reference, type === "weekly" ? 6 : 29),
+  };
+}
+
+function periodSubtitle(type: ReportType, start: string, end: string) {
+  const startDate = new Date(`${start}T12:00:00`);
+  const endDate = new Date(`${end}T12:00:00`);
+  const formatter = new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
     month: "long",
-  }).format(date);
-  const year = date.getFullYear();
+    year: "numeric",
+  });
   if (type === "daily") {
     return new Intl.DateTimeFormat("fr-FR", {
       weekday: "long",
       day: "2-digit",
       month: "long",
       year: "numeric",
-    }).format(date);
+    }).format(startDate);
   }
-  if (type === "monthly") return `${month} ${year}`;
-  const weekOfMonth = Math.ceil(date.getDate() / 7);
-  return `Semaine ${weekOfMonth} de ${month} ${year}`;
+  const duration = type === "weekly" ? "7 jours" : "30 jours";
+  return `Du ${formatter.format(startDate)} au ${formatter.format(endDate)} (${duration})`;
 }
 
 export function ReportingWorkspace() {
@@ -105,10 +107,14 @@ export function ReportingWorkspace() {
   const [tasks, setTasks] = useState<ReportTask[]>([]);
   const [updates, setUpdates] = useState<ProgressUpdate[]>([]);
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
+  const [zones, setZones] = useState<ZoneOption[]>([]);
   const [zoneElements, setZoneElements] = useState<ZoneElementOption[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [type, setType] = useState<ReportType>("daily");
-  const [referenceDate, setReferenceDate] = useState(isoDate(new Date()));
+  const today = isoDate(new Date());
+  const [periodStart, setPeriodStart] = useState(today);
+  const [periodEnd, setPeriodEnd] = useState(today);
+  const [selectedZoneIds, setSelectedZoneIds] = useState<string[]>([]);
   const [activityFilter, setActivityFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -128,7 +134,7 @@ export function ReportingWorkspace() {
       return;
     }
 
-    const [activityResult, taskResult, updateResult, peopleResult, elementsResult] =
+    const [activityResult, taskResult, updateResult, peopleResult, zonesResult, elementsResult] =
       await Promise.all([
         supabase.from("activities").select("*").eq("project_id", project.data.id).order("code"),
         supabase
@@ -147,6 +153,12 @@ export function ReportingWorkspace() {
           .eq("project_id", project.data.id)
           .eq("active", true),
         supabase
+          .from("zones")
+          .select("id,code,name")
+          .eq("project_id", project.data.id)
+          .eq("active", true)
+          .order("sort_order"),
+        supabase
           .from("zone_elements")
           .select("id,zone_id,code,name,element_type")
           .eq("project_id", project.data.id)
@@ -158,6 +170,7 @@ export function ReportingWorkspace() {
       taskResult.error,
       updateResult.error,
       peopleResult.error,
+      zonesResult.error,
       elementsResult.error,
     ].find(Boolean);
     if (firstError) {
@@ -170,6 +183,7 @@ export function ReportingWorkspace() {
       const loadedUpdates = (updateResult.data ?? []) as unknown as ProgressUpdate[];
       setUpdates(loadedUpdates);
       setCollaborators((peopleResult.data ?? []) as CollaboratorOption[]);
+      setZones((zonesResult.data ?? []) as ZoneOption[]);
       setZoneElements((elementsResult.data ?? []) as ZoneElementOption[]);
       const paths = loadedUpdates.flatMap((update) =>
         (update.photos ?? []).map((photo) => photo.file_path),
@@ -185,42 +199,38 @@ export function ReportingWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const period = periodFor(type, referenceDate);
+  const period = { start: periodStart, end: periodEnd };
   const filteredUpdates = updates.filter(
     (update) =>
       update.update_date >= period.start && update.update_date <= period.end,
   );
-  const taskHasUpdate = new Set(filteredUpdates.map((update) => update.task_id));
-  const relevantTasks = tasks.filter((task) => {
-    if (activityFilter !== "all" && task.activity_id !== activityFilter) return false;
-    const overlaps =
-      (!task.start_date || task.start_date <= period.end) &&
-      (!task.due_date || task.due_date >= period.start);
-    const completedInPeriod =
-      task.status === "done" &&
-      Boolean(
-        task.due_date &&
-          task.due_date >= period.start &&
-          task.due_date <= period.end,
+  const zoneName = (id: string | null) =>
+    zones.find((zone) => zone.id === id)?.name ?? "Zone non définie";
+  const selectedActivities = activities
+    .filter(
+      (activity) =>
+        (!selectedZoneIds.length ||
+          Boolean(activity.zone_id && selectedZoneIds.includes(activity.zone_id))) &&
+        (activityFilter === "all" || activity.id === activityFilter),
+    )
+    .sort((left, right) => {
+      const zoneOrder = zoneName(left.zone_id).localeCompare(
+        zoneName(right.zone_id),
+        "fr",
       );
-    return (
-      taskHasUpdate.has(task.id) ||
-      (overlaps && ["in_progress", "blocked"].includes(task.status)) ||
-      completedInPeriod
-    );
-  });
+      return zoneOrder || left.code.localeCompare(right.code, "fr");
+    });
+  const selectedActivityIds = new Set(
+    selectedActivities.map((activity) => activity.id),
+  );
+  const relevantTasks = tasks.filter(
+    (task) => Boolean(task.activity_id && selectedActivityIds.has(task.activity_id)),
+  );
   const relevantTaskIds = new Set(relevantTasks.map((task) => task.id));
   const reportUpdates = filteredUpdates.filter((update) =>
     relevantTaskIds.has(update.task_id),
   );
-  const relevantActivityIds = new Set(
-    relevantTasks.map((task) => task.activity_id).filter(Boolean),
-  );
-  const reportActivities = activities.filter(
-    (activity) =>
-      relevantActivityIds.has(activity.id) &&
-      (activityFilter === "all" || activity.id === activityFilter),
-  );
+  const reportActivities = selectedActivities;
   const photos = reportUpdates.flatMap((update) =>
     (update.photos ?? []).map((photo) => ({ ...photo, update })),
   );
@@ -286,12 +296,19 @@ export function ReportingWorkspace() {
     const task = tasks.find((item) => item.id === taskId);
     return activities.find((activity) => activity.id === task?.activity_id);
   };
+  const scopeTitle = selectedZoneIds.length
+    ? `Zones : ${zones
+        .filter((zone) => selectedZoneIds.includes(zone.id))
+        .map((zone) => zone.name)
+        .join(", ")}`
+    : "Périmètre global - toutes les zones";
 
   function buildExportData(): ReportExportData {
     return {
       reportTitle: reportLabels[type],
-      periodTitle: periodSubtitle(type, referenceDate),
+      periodTitle: periodSubtitle(type, period.start, period.end),
       periodRange: `${period.start} - ${period.end}`,
+      scopeTitle,
       metrics: {
         completed,
         inProgress,
@@ -301,6 +318,7 @@ export function ReportingWorkspace() {
         updates: reportUpdates.length,
       },
       activities: reportActivities.map((activity) => ({
+        zone: zoneName(activity.zone_id),
         code: activity.code,
         name: activity.name,
         location:
@@ -312,6 +330,7 @@ export function ReportingWorkspace() {
         progress: Number(activity.progress || 0),
         tasks: relevantTasks
           .filter((task) => task.activity_id === activity.id)
+          .sort((left, right) => left.title.localeCompare(right.title, "fr"))
           .map((task) => {
             const analysis = taskProgressAnalysis(task);
             const taskUpdates = reportUpdates.filter(
@@ -374,7 +393,7 @@ export function ReportingWorkspace() {
     try {
       await downloadReportPdf(
         buildExportData(),
-        `rapport-${type}-pdd-${referenceDate}.pdf`,
+        `rapport-${type}-pdd-${period.start}-${period.end}.pdf`,
       );
     } catch (exportError) {
       setError(
@@ -392,7 +411,7 @@ export function ReportingWorkspace() {
     try {
       await downloadReportWord(
         buildExportData(),
-        `rapport-${type}-pdd-${referenceDate}.docx`,
+        `rapport-${type}-pdd-${period.start}-${period.end}.docx`,
       );
     } catch (exportError) {
       setError(
@@ -402,6 +421,38 @@ export function ReportingWorkspace() {
       );
     }
     setExporting(null);
+  }
+
+  function changeReportType(nextType: ReportType) {
+    setType(nextType);
+    const nextPeriod = defaultPeriod(nextType, periodStart);
+    setPeriodStart(nextPeriod.start);
+    setPeriodEnd(nextPeriod.end);
+  }
+
+  function changePeriodStart(value: string) {
+    if (!value) return;
+    setPeriodStart(value);
+    setPeriodEnd(
+      type === "daily" ? value : addDays(value, type === "weekly" ? 6 : 29),
+    );
+  }
+
+  function changePeriodEnd(value: string) {
+    if (!value) return;
+    setPeriodEnd(value);
+    setPeriodStart(
+      type === "daily" ? value : addDays(value, type === "weekly" ? -6 : -29),
+    );
+  }
+
+  function toggleZone(zoneId: string) {
+    setSelectedZoneIds((current) =>
+      current.includes(zoneId)
+        ? current.filter((id) => id !== zoneId)
+        : [...current, zoneId],
+    );
+    setActivityFilter("all");
   }
 
   return (
@@ -429,24 +480,86 @@ export function ReportingWorkspace() {
         </div>
       </div>
 
-      <section className="no-print mt-6 grid gap-3 rounded-2xl border border-[var(--opc-border)] bg-white p-4 shadow-sm md:grid-cols-3">
+      <section className="no-print mt-6 grid gap-4 rounded-2xl border border-[var(--opc-border)] bg-white p-4 shadow-sm xl:grid-cols-4">
         <label className="block">
           <span className="text-xs font-black uppercase text-slate-500">Type de rapport</span>
-          <select value={type} onChange={(event) => setType(event.target.value as ReportType)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] bg-white px-3 py-3 text-sm font-bold">
+          <select value={type} onChange={(event) => changeReportType(event.target.value as ReportType)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] bg-white px-3 py-3 text-sm font-bold">
             {Object.entries(reportLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
         <label className="block">
-          <span className="text-xs font-black uppercase text-slate-500">Date de référence</span>
-          <input type="date" value={referenceDate} onChange={(event) => setReferenceDate(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] px-3 py-3 text-sm font-bold" />
+          <span className="text-xs font-black uppercase text-slate-500">
+            {type === "daily" ? "Date du rapport" : "Date de début"}
+          </span>
+          <input type="date" value={periodStart} onChange={(event) => changePeriodStart(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] px-3 py-3 text-sm font-bold" />
         </label>
+        {type !== "daily" ? (
+          <label className="block">
+            <span className="text-xs font-black uppercase text-slate-500">
+              Date de fin ({type === "weekly" ? "7 jours" : "30 jours"})
+            </span>
+            <input type="date" value={periodEnd} onChange={(event) => changePeriodEnd(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] px-3 py-3 text-sm font-bold" />
+          </label>
+        ) : null}
         <label className="block">
           <span className="text-xs font-black uppercase text-slate-500">Activité</span>
           <select value={activityFilter} onChange={(event) => setActivityFilter(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] bg-white px-3 py-3 text-sm font-bold">
             <option value="all">Toutes les activités</option>
-            {activities.map((activity) => <option key={activity.id} value={activity.id}>{activity.code} — {activity.name}</option>)}
+            {activities
+              .filter(
+                (activity) =>
+                  !selectedZoneIds.length ||
+                  Boolean(activity.zone_id && selectedZoneIds.includes(activity.zone_id)),
+              )
+              .map((activity) => <option key={activity.id} value={activity.id}>{activity.code} — {activity.name}</option>)}
           </select>
         </label>
+        <div className="xl:col-span-4">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-black uppercase text-slate-500">
+              Périmètre des zones
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedZoneIds([]);
+                setActivityFilter("all");
+              }}
+              className={`rounded-full px-3 py-1 text-xs font-black ${
+                selectedZoneIds.length
+                  ? "bg-slate-100 text-slate-600"
+                  : "bg-[var(--opc-blue)] text-white"
+              }`}
+            >
+              Global - toutes les zones
+            </button>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {zones.map((zone) => {
+              const selected = selectedZoneIds.includes(zone.id);
+              return (
+                <button
+                  key={zone.id}
+                  type="button"
+                  onClick={() => toggleZone(zone.id)}
+                  className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
+                    selected
+                      ? "border-[var(--opc-red)] bg-red-50 text-[var(--opc-red)]"
+                      : "border-[var(--opc-border)] bg-white text-slate-600"
+                  }`}
+                >
+                  {selected ? "✓ " : ""}
+                  {zone.name}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            {selectedZoneIds.length
+              ? `${selectedZoneIds.length} zone(s) sélectionnée(s).`
+              : "Rapport global couvrant toutes les zones."}
+          </p>
+        </div>
       </section>
 
       {error ? <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{error}</div> : null}
@@ -455,9 +568,9 @@ export function ReportingWorkspace() {
       {!loading ? (
         <article className="report-sheet mt-6 overflow-hidden rounded-2xl border border-[var(--opc-border)] bg-white shadow-lg">
           <header className="grid min-h-28 grid-cols-[180px_1fr_180px] items-center gap-5 bg-[var(--opc-red)] px-6 py-5 text-white">
-            <div className="flex h-16 items-center justify-center rounded-lg bg-white p-2">
+            <div className="flex h-16 items-center justify-center p-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/alstom-logo.png" alt="Alstom" className="max-h-12 max-w-full object-contain" />
+              <img src="/alstom-logo.png" alt="Alstom" className="h-auto max-h-12 w-auto max-w-full object-contain brightness-0 invert" />
             </div>
             <div className="text-center">
               <p className="text-sm font-black uppercase tracking-[0.13em]">
@@ -475,8 +588,9 @@ export function ReportingWorkspace() {
 
           <div className="border-b border-[var(--opc-border)] px-8 py-6 text-center">
             <h2 className="text-2xl font-black uppercase text-[var(--opc-ink)]">{reportLabels[type]}</h2>
-            <p className="mt-2 font-bold capitalize text-[var(--opc-blue)]">{periodSubtitle(type, referenceDate)}</p>
+            <p className="mt-2 font-bold capitalize text-[var(--opc-blue)]">{periodSubtitle(type, period.start, period.end)}</p>
             <p className="mt-1 text-xs text-slate-500">{period.start} → {period.end}</p>
+            <p className="mt-2 text-xs font-black uppercase text-[var(--opc-red)]">{scopeTitle}</p>
           </div>
 
           <div className="p-8">
@@ -523,6 +637,9 @@ export function ReportingWorkspace() {
                         <div>
                           <p className="text-xs font-black text-[var(--opc-red)]">{activity.code}</p>
                           <h4 className="mt-1 font-black">{activity.name}</h4>
+                          <p className="mt-1 text-xs font-black uppercase text-[var(--opc-blue)]">
+                            {zoneName(activity.zone_id)}
+                          </p>
                           <p className="mt-1 text-xs text-slate-500">
                             {elementName(activity.zone_element_id) || activity.zone || "Zone non définie"}
                           </p>
@@ -599,7 +716,7 @@ export function ReportingWorkspace() {
                 })}
                 {!reportActivities.length ? (
                   <div className="rounded-xl border border-dashed border-[var(--opc-border)] p-10 text-center text-sm font-bold text-slate-400">
-                    Aucune activité ou mise à jour pour cette période.
+                    Aucune activité dans le périmètre sélectionné.
                   </div>
                 ) : null}
               </div>
