@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft, CalendarDays, FileText } from "lucide-react";
 
 import { DocumentDetailsActions } from "@/components/documents/DocumentDetailsActions";
+import { DocumentFileAttach } from "@/components/documents/DocumentFileAttach";
 import type {
   DocumentAccess,
   DocumentDetails,
@@ -180,6 +181,7 @@ export function DocumentDetailsView({
                 <p className="mt-2 text-sm text-[var(--opc-muted)]">
                   {access.error ?? "Le fichier PDF ne peut pas être affiché."}
                 </p>
+                <DocumentFileAttach documentId={document.id} />
               </div>
             </div>
           )}

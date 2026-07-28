@@ -3,6 +3,11 @@ export type ActivityStatus = "not_started" | "in_progress" | "blocked" | "comple
 export type Activity = {
   id: string;
   project_id: string;
+  zone_id: string | null;
+  phase_id: string | null;
+  zone_element_id: string | null;
+  alstom_supervisor_id: string | null;
+  avanzit_site_manager_id: string | null;
   code: string;
   name: string;
   zone: string | null;
@@ -25,4 +30,9 @@ export type ActivityFormValues = {
   progress: number;
   status: ActivityStatus;
   critical: boolean;
+  zone_id: string;
+  phase_id: string;
+  zone_element_id: string;
+  alstom_supervisor_id: string;
+  avanzit_site_manager_id: string;
 };

@@ -253,6 +253,141 @@ export async function updateDocument(
   return { success: true };
 }
 
+export async function attachDocumentFile(
+  documentId: string,
+  formData: FormData,
+): Promise<DocumentActionResult> {
+  if (!documentIdSchema.safeParse(documentId).success) {
+    return { success: false, error: "Identifiant de document invalide." };
+  }
+
+  const file = formData.get("file");
+  if (!(file instanceof File)) {
+    return { success: false, error: "Sélectionne un fichier PDF." };
+  }
+
+  if (file.type !== "application/pdf") {
+    return { success: false, error: "Le fichier doit être un PDF." };
+  }
+
+  const supabase = await createClient();
+  const { data: document, error: documentError } = await supabase
+    .from("documents")
+    .select("project_id")
+    .eq("id", documentId)
+    .maybeSingle();
+
+  if (documentError) {
+    return {
+      success: false,
+      error: `Impossible de charger le document : ${documentError.message}`,
+    };
+  }
+
+  if (!document) {
+    return { success: false, error: "Ce document n’existe plus." };
+  }
+
+  const storagePath = `${
+    document.project_id
+  }/${documentId}/${crypto.randomUUID()}-${safeFileName(file.name)}`;
+  const storage = supabase.storage.from("documents");
+  const { error: uploadError } = await storage.upload(storagePath, file, {
+    contentType: file.type,
+    upsert: false,
+  });
+
+  if (uploadError) {
+    return {
+      success: false,
+      error: `Impossible d’envoyer le PDF : ${uploadError.message}`,
+    };
+  }
+
+  const signedUrlResult = await storage.createSignedUrl(storagePath, 60);
+  if (signedUrlResult.error || !signedUrlResult.data) {
+    await storage.remove([storagePath]);
+    return {
+      success: false,
+      error:
+        "Le PDF a été envoyé, mais son accès privé ne peut pas être vérifié. " +
+        "Exécute la migration des politiques Storage. Détail : " +
+        (signedUrlResult.error?.message ?? "lien signé indisponible"),
+    };
+  }
+
+  const { error: updateError } = await supabase
+    .from("documents")
+    .update({ file_url: storagePath })
+    .eq("id", documentId);
+
+  if (updateError) {
+    await storage.remove([storagePath]);
+    return {
+      success: false,
+      error: `Le PDF a été envoyé, mais le document n’a pas pu être mis à jour : ${updateError.message}`,
+    };
+  }
+
+  revalidatePath("/documents");
+  revalidatePath(`/documents/${documentId}`);
+  return { success: true };
+}
+
+export async function getTaskDocumentPreview(
+  documentId: string,
+): Promise<
+  | { success: true; title: string; url: string }
+  | { success: false; error: string }
+> {
+  if (!documentIdSchema.safeParse(documentId).success) {
+    return { success: false, error: "Identifiant de document invalide." };
+  }
+
+  const supabase = await createClient();
+  const { data: document, error: documentError } = await supabase
+    .from("documents")
+    .select("title,file_url")
+    .eq("id", documentId)
+    .maybeSingle();
+
+  if (documentError) {
+    return {
+      success: false,
+      error: `Impossible de charger le document : ${documentError.message}`,
+    };
+  }
+
+  if (!document) {
+    return { success: false, error: "Ce document n’existe plus." };
+  }
+
+  if (!document.file_url) {
+    return {
+      success: false,
+      error: "Aucun fichier PDF n’est associé à ce document.",
+    };
+  }
+
+  const storage = supabase.storage.from("documents");
+  for (const path of getDocumentStoragePathCandidates(document.file_url)) {
+    const signedUrlResult = await storage.createSignedUrl(path, 300);
+    if (!signedUrlResult.error && signedUrlResult.data?.signedUrl) {
+      return {
+        success: true,
+        title: document.title,
+        url: signedUrlResult.data.signedUrl,
+      };
+    }
+  }
+
+  return {
+    success: false,
+    error:
+      "Le PDF est introuvable dans le stockage privé. Tu peux le remplacer depuis la fiche du document.",
+  };
+}
+
 export async function deleteDocument(
   documentId: string,
 ): Promise<DocumentActionResult> {

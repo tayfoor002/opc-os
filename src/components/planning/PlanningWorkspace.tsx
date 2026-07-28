@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CalendarDays,
@@ -10,6 +10,7 @@ import {
   GanttChartSquare,
   GripVertical,
   ListChecks,
+  ListTree,
   Loader2,
   RefreshCw,
   Search,
@@ -18,6 +19,7 @@ import { ActivityDetailsDrawer } from "@/components/planning/ActivityDetailsDraw
 import { createClient } from "@/lib/supabase/client";
 import { addDays, differenceInDays, formatDateOnly, formatLongDate, formatShortDate, parseDateOnly, startOfWeek } from "@/lib/date-utils";
 import type { Activity, ActivityStatus } from "@/types/activity";
+import type { Task } from "@/types/task";
 
 type ViewMode = "week" | "gantt" | "activities";
 type GanttScale = "day" | "week" | "month" | "year";
@@ -32,6 +34,7 @@ const statusLabels: Record<ActivityStatus, string> = {
 export function PlanningWorkspace() {
   const supabase = useMemo(() => createClient(), []);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("week");
   const [ganttScale, setGanttScale] = useState<GanttScale>("week");
@@ -58,14 +61,22 @@ export function PlanningWorkspace() {
       return;
     }
     setProjectId(project.data.id);
-    const result = await supabase.from("activities").select("*").eq("project_id", project.data.id).order("start_date", { ascending: true });
-    if (result.error) setError(result.error.message);
-    else setActivities((result.data ?? []) as Activity[]);
+    const [activityResult, taskResult] = await Promise.all([
+      supabase.from("activities").select("*").eq("project_id", project.data.id).order("start_date", { ascending: true }),
+      supabase.from("tasks").select("*").eq("project_id", project.data.id).order("start_date", { ascending: true }),
+    ]);
+    if (activityResult.error) setError(activityResult.error.message);
+    else setActivities((activityResult.data ?? []) as Activity[]);
+    if (taskResult.error) setError(taskResult.error.message);
+    else setTasks((taskResult.data ?? []) as Task[]);
     setLoading(false);
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial remote data synchronization
     void loadActivities();
+    // loadActivities intentionally remains local to preserve realtime refresh behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -73,8 +84,11 @@ export function PlanningWorkspace() {
     const channel = supabase
       .channel(`planning-activities-${projectId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "activities", filter: `project_id=eq.${projectId}` }, () => void loadActivities(false))
+      .on("postgres_changes", { event: "*", schema: "public", table: "tasks", filter: `project_id=eq.${projectId}` }, () => void loadActivities(false))
       .subscribe();
     return () => { void supabase.removeChannel(channel); };
+    // loadActivities intentionally remains local to preserve realtime refresh behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, supabase]);
 
   const filtered = useMemo(() => activities.filter((activity) =>
@@ -175,7 +189,7 @@ export function PlanningWorkspace() {
           />
         ) : null}
 
-        {!loading && view === "gantt" ? <GanttView activities={datedActivities} onOpen={setSelectedActivity} scale={ganttScale} onScaleChange={setGanttScale} /> : null}
+        {!loading && view === "gantt" ? <GanttView activities={datedActivities} tasks={tasks} onOpen={setSelectedActivity} scale={ganttScale} onScaleChange={setGanttScale} /> : null}
         {!loading && view === "activities" ? <ActivitiesTable activities={filtered} onOpen={setSelectedActivity} /> : null}
       </section>
 
@@ -379,12 +393,25 @@ function ActivityCard({ activity, onOpen, onDragStart, onDragEnd }: { activity: 
   );
 }
 
-function GanttView({ activities, onOpen, scale, onScaleChange }: { activities: Activity[]; onOpen: (activity: Activity) => void; scale: GanttScale; onScaleChange: (scale: GanttScale) => void }) {
+function GanttView({
+  activities,
+  tasks,
+  onOpen,
+  scale,
+  onScaleChange,
+}: {
+  activities: Activity[];
+  tasks: Task[];
+  onOpen: (activity: Activity) => void;
+  scale: GanttScale;
+  onScaleChange: (scale: GanttScale) => void;
+}) {
   const [anchorDate, setAnchorDate] = useState(() => {
     const value = new Date();
     value.setHours(0, 0, 0, 0);
     return value;
   });
+  const [showTasks, setShowTasks] = useState(false);
 
   if (activities.length === 0) return <EmptyState />;
 
@@ -424,6 +451,18 @@ function GanttView({ activities, onOpen, scale, onScaleChange }: { activities: A
               {label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setShowTasks((current) => !current)}
+            className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-black transition ${
+              showTasks
+                ? "border-violet-600 bg-violet-600 text-white"
+                : "border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <ListTree className="h-4 w-4" />
+            {showTasks ? "Masquer les tasks" : "Afficher les tasks"}
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => shift(-1)} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--opc-border)] bg-white"><ChevronLeft className="h-4 w-4" /></button>
@@ -434,7 +473,12 @@ function GanttView({ activities, onOpen, scale, onScaleChange }: { activities: A
 
       <div className="mb-3 flex items-center justify-between text-xs font-bold text-slate-500">
         <span>{formatLongDate(rangeStart)} — {formatLongDate(rangeEnd)}</span>
-        <span>{visibleActivities.length} activité{visibleActivities.length > 1 ? "s" : ""} visible{visibleActivities.length > 1 ? "s" : ""}</span>
+        <span>
+          {visibleActivities.length} activité{visibleActivities.length > 1 ? "s" : ""}
+          {showTasks
+            ? ` · ${tasks.filter((task) => task.activity_id && task.start_date && task.due_date).length} tasks planifiées`
+            : ""}
+        </span>
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-[var(--opc-border)]">
@@ -457,19 +501,98 @@ function GanttView({ activities, onOpen, scale, onScaleChange }: { activities: A
             const offset = differenceInDays(rangeStart, clippedStart);
             const duration = Math.max(1, differenceInDays(clippedStart, clippedFinish) + 1);
             const barClass = activity.status === "completed" ? "bg-emerald-600" : activity.status === "blocked" ? "bg-red-600" : activity.critical ? "bg-orange-500" : "bg-[var(--opc-blue)]";
+            const activityTasks = tasks.filter((task) => {
+              if (
+                task.activity_id !== activity.id ||
+                !task.start_date ||
+                !task.due_date
+              ) {
+                return false;
+              }
+              const taskStart = parseDateOnly(task.start_date);
+              const taskFinish = parseDateOnly(task.due_date);
+              return taskStart <= rangeEnd && taskFinish >= rangeStart;
+            });
             return (
-              <>
-              <div key={`${activity.id}-label`} onClick={() => onOpen(activity)} className="sticky left-0 z-20 flex h-14 cursor-pointer items-center border-b border-r border-slate-100 bg-white px-4 hover:bg-blue-50/40">
+              <Fragment key={activity.id}>
+              <div onClick={() => onOpen(activity)} className="sticky left-0 z-20 flex h-14 cursor-pointer items-center border-b border-r border-slate-100 bg-white px-4 hover:bg-blue-50/40">
                 <div className="min-w-0"><p className="truncate text-xs font-black text-[var(--opc-blue)]">{activity.code}</p><p className="truncate text-sm font-bold text-slate-800">{activity.name}</p></div>
               </div>
-              <button key={`${activity.id}-timeline`} type="button" onClick={() => onOpen(activity)} className="relative h-14 border-b border-slate-100 text-left hover:bg-blue-50/20" style={{ backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth}px)`, backgroundSize: `${cellWidth}px 100%` }}>
+              <button type="button" onClick={() => onOpen(activity)} className="relative h-14 border-b border-slate-100 text-left hover:bg-blue-50/20" style={{ backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth}px)`, backgroundSize: `${cellWidth}px 100%` }}>
                 {todayVisible ? <div className="pointer-events-none absolute inset-y-0 z-10 border-l-2 border-red-500/80" style={{ left: `${todayOffset * dayWidth}px` }} /> : null}
                 <div className={`absolute top-2.5 h-9 overflow-hidden rounded-lg shadow-sm ${barClass}`} style={{ left: `${offset * dayWidth}px`, width: `${Math.max(4, duration * dayWidth)}px` }} title={`${activity.name} · ${formatShortDate(activity.start_date)} → ${formatShortDate(activity.finish_date)}`}>
                   <div className="absolute inset-y-0 left-0 bg-black/20" style={{ width: `${Math.min(100, Math.max(0, activity.progress))}%` }} />
                   <span className="relative z-10 flex h-full items-center whitespace-nowrap px-2 text-[10px] font-black text-white">{activity.progress}% · {formatShortDate(activity.start_date)} → {formatShortDate(activity.finish_date)}</span>
                 </div>
               </button>
-              </>
+              {showTasks
+                ? activityTasks.map((task) => {
+                    const taskStart = parseDateOnly(task.start_date!);
+                    const taskFinish = parseDateOnly(task.due_date!);
+                    const taskClippedStart =
+                      taskStart < rangeStart ? rangeStart : taskStart;
+                    const taskClippedFinish =
+                      taskFinish > rangeEnd ? rangeEnd : taskFinish;
+                    const taskOffset = differenceInDays(
+                      rangeStart,
+                      taskClippedStart,
+                    );
+                    const taskDuration = Math.max(
+                      1,
+                      differenceInDays(taskClippedStart, taskClippedFinish) + 1,
+                    );
+                    const taskBarClass =
+                      task.status === "done"
+                        ? "bg-emerald-500"
+                        : task.status === "blocked"
+                          ? "bg-red-500"
+                          : task.status === "in_progress"
+                            ? "bg-violet-600"
+                            : "bg-violet-400";
+
+                    return (
+                      <Fragment key={task.id}>
+                        <a
+                          href={`/tasks?activity=${activity.id}`}
+                          className="sticky left-0 z-20 flex h-11 min-w-0 items-center border-b border-r border-slate-100 bg-slate-50 px-4 pl-8 hover:bg-violet-50"
+                          title={task.title}
+                        >
+                          <span className="mr-2 text-xs font-black text-violet-500">↳</span>
+                          <span className="truncate text-xs font-bold text-slate-700">
+                            {task.title}
+                          </span>
+                        </a>
+                        <div
+                          className="relative h-11 border-b border-slate-100 bg-slate-50/40"
+                          style={{
+                            backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth}px)`,
+                            backgroundSize: `${cellWidth}px 100%`,
+                          }}
+                        >
+                          {todayVisible ? (
+                            <div
+                              className="pointer-events-none absolute inset-y-0 z-10 border-l-2 border-red-500/60"
+                              style={{ left: `${todayOffset * dayWidth}px` }}
+                            />
+                          ) : null}
+                          <div
+                            className={`absolute top-2 h-7 overflow-hidden rounded-md shadow-sm ${taskBarClass}`}
+                            style={{
+                              left: `${taskOffset * dayWidth}px`,
+                              width: `${Math.max(4, taskDuration * dayWidth)}px`,
+                            }}
+                            title={`${task.title} · ${formatShortDate(task.start_date)} → ${formatShortDate(task.due_date)}`}
+                          >
+                            <span className="flex h-full items-center whitespace-nowrap px-2 text-[10px] font-black text-white">
+                              {formatShortDate(task.start_date)} → {formatShortDate(task.due_date)}
+                            </span>
+                          </div>
+                        </div>
+                      </Fragment>
+                    );
+                  })
+                : null}
+              </Fragment>
             );
           })}
         </div>
@@ -480,6 +603,7 @@ function GanttView({ activities, onOpen, scale, onScaleChange }: { activities: A
         <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-orange-500" /> Critique</span>
         <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-red-600" /> Bloquée</span>
         <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-600" /> Terminée</span>
+        {showTasks ? <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-violet-500" /> Tasks</span> : null}
         <span className="text-red-600">│ J+0 = aujourd’hui</span>
       </div>
     </div>

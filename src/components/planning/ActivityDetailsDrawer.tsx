@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Activity, ActivityStatus } from "@/types/activity";
+import type { CollaboratorOption } from "@/types/organization";
 
 const statusLabels: Record<ActivityStatus, string> = {
   not_started: "Non démarrée",
@@ -34,8 +35,24 @@ type ActivityTask = {
   id: string;
   title: string;
   owner: string | null;
+  start_date: string | null;
   due_date: string | null;
   status: "todo" | "in_progress" | "blocked" | "done";
+  alstom_supervisor_id: string | null;
+  avanzit_site_manager_id: string | null;
+  documents?: TaskLinkedDocument[];
+};
+
+type TaskLinkedDocument = {
+  task_id: string;
+  document_id: string;
+  task_title: string;
+  document: {
+    id: string;
+    title: string;
+    reference: string | null;
+    status: string;
+  };
 };
 
 type ActivityMaterial = {
@@ -95,8 +112,10 @@ export function ActivityDetailsDrawer({
   const [loadingLinkedData, setLoadingLinkedData] = useState(false);
   const [linkedError, setLinkedError] = useState("");
   const [tasks, setTasks] = useState<ActivityTask[]>([]);
+  const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
   const [materials, setMaterials] = useState<ActivityMaterial[]>([]);
   const [documents, setDocuments] = useState<ActivityDocument[]>([]);
+  const [taskDocuments, setTaskDocuments] = useState<TaskLinkedDocument[]>([]);
   const [progressUpdates, setProgressUpdates] = useState<ProgressUpdate[]>([]);
   const [newTask, setNewTask] = useState("");
   const [newMaterial, setNewMaterial] = useState("");
@@ -108,40 +127,120 @@ export function ActivityDetailsDrawer({
 
   useEffect(() => {
     if (!activity) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset the drawer for the selected activity
     setProgress(Number(activity.progress));
     setStatus(activity.status);
     setResponsible(activity.responsible ?? "");
     setTab("overview");
     setLinkedError("");
     void loadLinkedData(activity.id);
+    // loadLinkedData intentionally uses the stable Supabase client created above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activity]);
 
   async function loadLinkedData(activityId: string) {
     setLoadingLinkedData(true);
     setLinkedError("");
 
-    const [taskResult, materialResult, documentResult, progressResult] = await Promise.all([
-      supabase.from("tasks").select("id,title,owner,due_date,status").eq("activity_id", activityId).order("created_at", { ascending: false }),
+    const [taskResult, materialResult, documentResult, progressResult, collaboratorsResult] = await Promise.all([
+      supabase.from("tasks").select("id,title,owner,start_date,due_date,status,alstom_supervisor_id,avanzit_site_manager_id").eq("activity_id", activityId).order("created_at", { ascending: false }),
       supabase.from("activity_materials").select("id,name,quantity,unit,supplier,delivery_status").eq("activity_id", activityId).order("created_at", { ascending: false }),
       supabase.from("activity_documents").select("id,name,document_type,url,created_at").eq("activity_id", activityId).order("created_at", { ascending: false }),
       supabase.from("activity_progress_updates").select("id,progress,note,update_date").eq("activity_id", activityId).order("update_date", { ascending: false }),
+      supabase.from("collaborators").select("id,full_name,company,role,profile,phone").eq("project_id", activity?.project_id ?? "").eq("active", true).order("sort_order"),
     ]);
 
-    if (!taskResult.error) setTasks((taskResult.data ?? []) as ActivityTask[]);
+    const loadedTasks = taskResult.error
+      ? []
+      : ((taskResult.data ?? []) as ActivityTask[]);
+
+    if (!taskResult.error) setTasks(loadedTasks);
     if (!materialResult.error) setMaterials((materialResult.data ?? []) as ActivityMaterial[]);
     if (!documentResult.error) setDocuments((documentResult.data ?? []) as ActivityDocument[]);
     if (!progressResult.error) setProgressUpdates((progressResult.data ?? []) as ProgressUpdate[]);
+    if (!collaboratorsResult.error) setCollaborators((collaboratorsResult.data ?? []) as CollaboratorOption[]);
 
-    const firstError = [taskResult.error, materialResult.error, documentResult.error, progressResult.error].find(Boolean);
+    let taskDocumentError = null;
+    if (loadedTasks.length > 0) {
+      const taskTitles = new Map(
+        loadedTasks.map((task) => [task.id, task.title]),
+      );
+      const taskDocumentResult = await supabase
+        .from("task_documents")
+        .select(
+          "task_id,document_id,document:documents(id,title,reference,status)",
+        )
+        .in(
+          "task_id",
+          loadedTasks.map((task) => task.id),
+        );
+
+      taskDocumentError = taskDocumentResult.error;
+      if (!taskDocumentResult.error) {
+        const loadedTaskDocuments = (
+          (taskDocumentResult.data ?? []) as unknown as Array<
+            Omit<TaskLinkedDocument, "task_title">
+          >
+        )
+          .filter((link) => Boolean(link.document))
+          .map((link) => ({
+            ...link,
+            task_title: taskTitles.get(link.task_id) ?? "Tâche",
+          }));
+        setTaskDocuments(loadedTaskDocuments);
+        setTasks(
+          loadedTasks.map((task) => ({
+            ...task,
+            documents: loadedTaskDocuments.filter(
+              (link) => link.task_id === task.id,
+            ),
+          })),
+        );
+      }
+    } else {
+      setTaskDocuments([]);
+    }
+
+    const firstError = [
+      taskResult.error,
+      materialResult.error,
+      documentResult.error,
+      progressResult.error,
+      collaboratorsResult.error,
+      taskDocumentError,
+    ].find(Boolean);
     if (firstError) setLinkedError("Certaines données liées ne sont pas encore disponibles. Exécute la migration Sprint 14.2 dans Supabase.");
     setLoadingLinkedData(false);
   }
 
   if (!activity) return null;
   const currentActivity = activity;
+  const collaboratorName = (id: string | null) =>
+    collaborators.find((person) => person.id === id)?.full_name;
 
   const completedTasks = tasks.filter((item) => item.status === "done").length;
   const taskProgress = tasks.length ? Math.round((completedTasks / tasks.length) * 100) : 0;
+  const uniqueTaskDocuments = Array.from(
+    taskDocuments
+      .reduce<
+        Map<string, TaskLinkedDocument & { task_titles: string[] }>
+      >((uniqueDocuments, link) => {
+        const existing = uniqueDocuments.get(link.document_id);
+        if (existing) {
+          if (!existing.task_titles.includes(link.task_title)) {
+            existing.task_titles.push(link.task_title);
+          }
+        } else {
+          uniqueDocuments.set(link.document_id, {
+            ...link,
+            task_titles: [link.task_title],
+          });
+        }
+        return uniqueDocuments;
+      }, new Map())
+      .values(),
+  );
+  const totalDocumentCount = documents.length + uniqueTaskDocuments.length;
 
   async function addTask() {
     if (!newTask.trim()) return;
@@ -152,6 +251,14 @@ export function ActivityDetailsDrawer({
       title: newTask.trim(),
       status: "todo",
       priority: "medium",
+      zone_id: currentActivity.zone_id,
+      phase_id: currentActivity.phase_id,
+      zone_element_id: currentActivity.zone_element_id,
+      alstom_supervisor_id: currentActivity.alstom_supervisor_id,
+      avanzit_site_manager_id: currentActivity.avanzit_site_manager_id,
+      owner:
+        collaboratorName(currentActivity.alstom_supervisor_id)
+        ?? currentActivity.responsible,
     });
     if (result.error) setLinkedError(result.error.message);
     else {
@@ -237,7 +344,7 @@ export function ActivityDetailsDrawer({
             ["overview", "Synthèse", Gauge],
             ["tasks", `Tasks ${tasks.length}`, CheckCircle2],
             ["materials", `Materials ${materials.length}`, Boxes],
-            ["documents", `Documents ${documents.length}`, FileText],
+            ["documents", `Documents ${totalDocumentCount}`, FileText],
             ["progress", "Avancement", BarChart3],
             ["reporting", "Reporting", Link2],
           ] as const).map(([value, label, Icon]) => (
@@ -264,7 +371,7 @@ export function ActivityDetailsDrawer({
                 <Metric label="Avancement" value={`${progress} %`} />
                 <Metric label="Tasks" value={`${completedTasks}/${tasks.length}`} />
                 <Metric label="Materials" value={String(materials.length)} />
-                <Metric label="Documents" value={String(documents.length)} />
+                <Metric label="Documents uniques" value={String(totalDocumentCount)} />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -300,7 +407,30 @@ export function ActivityDetailsDrawer({
               <div className="mt-4 space-y-2">
                 {tasks.length ? tasks.map((task) => (
                   <div key={task.id} className="flex items-center justify-between gap-3 rounded-xl border border-[var(--opc-border)] p-3">
-                    <div><p className="text-sm font-black">{task.title}</p><p className="mt-1 text-xs text-slate-500">{task.owner ?? "Non affectée"}{task.due_date ? ` · ${task.due_date}` : ""}</p></div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-black">{task.title}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Alstom : {collaboratorName(task.alstom_supervisor_id) ?? task.owner ?? "Non affectée"}
+                        {" · "}Avanzit : {collaboratorName(task.avanzit_site_manager_id) ?? "À affecter"}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {task.start_date ?? "—"} → {task.due_date ?? "—"}
+                      </p>
+                      {task.documents?.length ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {task.documents.map((link) => (
+                            <a
+                              key={link.document_id}
+                              href={`/documents/${link.document_id}`}
+                              className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-[10px] font-black text-[var(--opc-blue)] hover:bg-blue-100"
+                            >
+                              <FileText className="h-3 w-3" />
+                              {link.document.reference || link.document.title}
+                            </a>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                     <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">{taskStatusLabels[task.status]}</span>
                   </div>
                 )) : <EmptyState text="Aucune tâche liée à cette activité." />}
@@ -330,6 +460,34 @@ export function ActivityDetailsDrawer({
 
           {!loadingLinkedData && tab === "documents" ? (
             <LinkedSection title="Documents liés" description="Enregistre un document, un plan ou un lien de référence.">
+              {uniqueTaskDocuments.length ? (
+                <div className="mb-5">
+                  <p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">
+                    Documents utilisés par les tâches
+                  </p>
+                  <div className="space-y-2">
+                    {uniqueTaskDocuments.map((link) => (
+                      <a
+                        key={`${link.task_id}-${link.document_id}`}
+                        href={`/documents/${link.document_id}`}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/50 p-3 hover:bg-blue-50"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black">
+                            {link.document.title}
+                          </p>
+                          <p className="mt-1 truncate text-xs text-slate-500">
+                            {link.document.reference || "Sans référence"} · Tâche
+                            {link.task_titles.length > 1 ? "s" : ""} :{" "}
+                            {link.task_titles.join(", ")}
+                          </p>
+                        </div>
+                        <ExternalLink className="h-4 w-4 shrink-0 text-[var(--opc-blue)]" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="grid gap-2">
                 <input value={newDocument} onChange={(event) => setNewDocument(event.target.value)} placeholder="Nom du document" className="rounded-xl border border-[var(--opc-border)] px-3 py-2.5 text-sm" />
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
@@ -370,15 +528,15 @@ export function ActivityDetailsDrawer({
           ) : null}
 
           {!loadingLinkedData && tab === "reporting" ? (
-            <LinkedSection title="Reporting de l'activité" description="Toutes les données liées sont prêtes pour alimenter les rapports.">
+            <LinkedSection title="Reporting de l’activité" description="Toutes les données liées sont prêtes pour alimenter les rapports.">
               <div className="grid grid-cols-2 gap-3">
                 <Metric label="Avancement" value={`${progress} %`} />
                 <Metric label="Tasks terminées" value={`${completedTasks}/${tasks.length}`} />
                 <Metric label="Materials" value={String(materials.length)} />
-                <Metric label="Documents" value={String(documents.length)} />
+                <Metric label="Documents uniques" value={String(totalDocumentCount)} />
               </div>
               <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
-                Le prochain module Reporting utilisera automatiquement ces données pour générer la fiche activité, les retards, les ressources, les documents et l'historique d'avancement.
+                Le prochain module Reporting utilisera automatiquement ces données pour générer la fiche activité, les retards, les ressources, les documents et l’historique d’avancement.
               </div>
               <ModuleLink href={`/reporting?activity=${activity.id}`} label="Ouvrir le module Reporting" />
             </LinkedSection>
