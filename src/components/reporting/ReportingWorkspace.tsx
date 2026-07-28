@@ -765,9 +765,9 @@ export function ReportingWorkspace() {
                 PROGRAMME DE DÉVELOPPEMENT
               </p>
             </div>
-            <div className="flex h-16 items-center justify-center rounded-lg bg-white p-2">
+            <div className="flex h-16 items-center justify-center rounded-lg bg-white p-1.5">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/avanzit-logo.svg" alt="Avanzit" className="max-h-12 max-w-full object-contain" />
+              <img src="/avanzit-logo.svg" alt="Avanzit" className="h-auto max-h-14 w-auto max-w-full object-contain" />
             </div>
           </header>
 

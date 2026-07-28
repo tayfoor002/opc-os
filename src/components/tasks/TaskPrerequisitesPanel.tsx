@@ -477,7 +477,7 @@ export function TaskPrerequisitesPanel({
         </div>
       ) : null}
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+      <div className="mt-4 grid gap-4">
         <div className="rounded-2xl border border-[var(--opc-border)] bg-white p-4">
           <h4 className="flex items-center gap-2 font-black">
             <HardHat className="h-4 w-4 text-[var(--opc-blue)]" />
@@ -651,7 +651,7 @@ export function TaskPrerequisitesPanel({
             <FileCheck2 className="h-4 w-4 text-[var(--opc-blue)]" />
             Plans, procédures et documents
           </h4>
-          <div className="mt-3 grid gap-2 sm:grid-cols-[130px_1fr]">
+          <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-[130px_minmax(0,1fr)_auto]">
             <select
               value={documentType}
               onChange={(event) => setDocumentType(event.target.value)}
@@ -667,7 +667,7 @@ export function TaskPrerequisitesPanel({
               value={documentLabel}
               onChange={(event) => setDocumentLabel(event.target.value)}
               placeholder="Document requis (ex. Plan d’exécution validé)"
-              className="input"
+              className="input sm:col-span-2"
             />
             <select
               value={documentId}
@@ -679,7 +679,7 @@ export function TaskPrerequisitesPanel({
                   setDocumentLabel(selected.name);
                 }
               }}
-              className="input"
+              className="input sm:col-span-2"
             >
               <option value="">Aucun fichier lié pour le moment</option>
               {documents.map((document) => (
@@ -704,7 +704,7 @@ export function TaskPrerequisitesPanel({
                 setDocumentId("");
                 setDocumentLabel("");
               }}
-              className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 text-sm font-black text-white disabled:opacity-50"
+              className="flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 text-center text-sm font-black leading-snug text-white disabled:opacity-50 sm:min-w-44"
             >
               <Plus className="h-4 w-4" /> Ajouter le prérequis
             </button>

@@ -822,7 +822,7 @@ export function TasksWorkspace() {
         <button
           type="button"
           onClick={() => openCreate()}
-          className="flex items-center justify-center gap-2 rounded-xl bg-[var(--opc-red)] px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-[var(--opc-red-dark)]"
+          className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--opc-red)] px-4 text-sm font-black text-white shadow-sm transition hover:bg-[var(--opc-red-dark)]"
         >
           <CirclePlus className="h-4 w-4" /> Nouvelle tâche
         </button>
@@ -842,7 +842,7 @@ export function TasksWorkspace() {
             <button
               type="button"
               onClick={() => setArchiveView("active")}
-              className={`rounded-xl px-4 py-2 text-sm font-black transition ${
+              className={`h-10 rounded-xl px-4 text-sm font-black transition ${
                 archiveView === "active"
                   ? "bg-[var(--opc-blue)] text-white"
                   : "border border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"
@@ -853,7 +853,7 @@ export function TasksWorkspace() {
             <button
               type="button"
               onClick={() => setArchiveView("archived")}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-black transition ${
+              className={`inline-flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-black transition ${
                 archiveView === "archived"
                   ? "bg-slate-800 text-white"
                   : "border border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"
@@ -865,7 +865,7 @@ export function TasksWorkspace() {
             <button
               type="button"
               onClick={() => setArchiveView("all")}
-              className={`rounded-xl px-4 py-2 text-sm font-black transition ${
+              className={`h-10 rounded-xl px-4 text-sm font-black transition ${
                 archiveView === "all"
                   ? "bg-slate-200 text-slate-900"
                   : "border border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"
@@ -926,11 +926,11 @@ export function TasksWorkspace() {
                 </select>
               </div>
 
-              <button type="button" onClick={resetFilters} className="rounded-xl border border-[var(--opc-border)] px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50">
+              <button type="button" onClick={resetFilters} className="h-10 rounded-xl border border-[var(--opc-border)] px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">
                 Réinitialiser
               </button>
 
-              <button type="button" onClick={() => void loadData()} className="flex items-center gap-2 rounded-xl border border-[var(--opc-border)] px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50">
+              <button type="button" onClick={() => void loadData()} className="flex h-10 items-center gap-2 rounded-xl border border-[var(--opc-border)] px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">
                 <RefreshCw className="h-4 w-4" /> Actualiser
               </button>
             </div>
@@ -1155,7 +1155,7 @@ export function TasksWorkspace() {
                 <p className="text-xs font-black uppercase tracking-[0.16em] text-[var(--opc-red)]">{editing ? "Détails de la tâche" : "Création"}</p>
                 <h2 className="mt-2 text-2xl font-black text-[var(--opc-ink)]">{editing ? editing.title : "Nouvelle tâche"}</h2>
               </div>
-              <button type="button" onClick={closeDrawer} className="grid h-9 w-9 place-items-center rounded-xl border border-[var(--opc-border)] text-slate-500 hover:bg-slate-50">
+              <button type="button" onClick={closeDrawer} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[var(--opc-border)] text-slate-500 hover:bg-slate-50">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -1411,7 +1411,7 @@ export function TasksWorkspace() {
                         type="button"
                         disabled={progressSaving || !buildingPhases.length}
                         onClick={() => void saveBuildingProgress()}
-                        className="mt-4 w-full rounded-xl bg-blue-50 px-4 py-3 text-sm font-black text-[var(--opc-blue)] disabled:opacity-50"
+                        className="mt-4 flex h-11 w-full items-center justify-center rounded-xl bg-blue-50 px-4 text-center text-sm font-black text-[var(--opc-blue)] disabled:opacity-50"
                       >
                         Enregistrer les phases de construction
                       </button>
@@ -1498,7 +1498,7 @@ export function TasksWorkspace() {
                     type="button"
                     disabled={progressSaving}
                     onClick={() => void saveProgressUpdate()}
-                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 py-3 text-sm font-black text-white disabled:opacity-60"
+                    className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 py-2 text-center text-sm font-black leading-snug text-white disabled:opacity-60"
                   >
                     {progressSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
                     {editingProgressUpdateId
@@ -1661,18 +1661,18 @@ export function TasksWorkspace() {
                 </Field>
               </div>
 
-              <div className="mt-7 flex flex-wrap justify-between gap-3 border-t border-[var(--opc-border)] pt-5">
-                <div>
+              <div className="mt-7 grid min-w-0 gap-3 border-t border-[var(--opc-border)] pt-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                <div className="min-w-0">
                   {editing ? (
-                    <button type="button" onClick={() => setTaskToDelete(editing)} className="flex items-center gap-2 rounded-xl border border-red-200 px-5 py-3 text-sm font-black text-[var(--opc-red)] hover:bg-red-50">
+                    <button type="button" onClick={() => setTaskToDelete(editing)} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-200 px-4 text-sm font-black text-[var(--opc-red)] hover:bg-red-50 sm:w-auto">
                       <Trash2 className="h-4 w-4" /> Supprimer
                     </button>
                   ) : null}
                 </div>
 
-                <div className="flex gap-3">
-                  <button type="button" onClick={closeDrawer} className="rounded-xl border border-[var(--opc-border)] px-5 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50">Annuler</button>
-                  <button type="submit" disabled={saving || !form.title.trim()} className="flex items-center gap-2 rounded-xl bg-[var(--opc-blue)] px-5 py-3 text-sm font-black text-white disabled:opacity-60">
+                <div className="grid min-w-0 grid-cols-2 gap-3 sm:flex">
+                  <button type="button" onClick={closeDrawer} className="h-11 min-w-0 rounded-xl border border-[var(--opc-border)] px-4 text-sm font-bold text-slate-600 hover:bg-slate-50 sm:min-w-28">Annuler</button>
+                  <button type="submit" disabled={saving || !form.title.trim()} className="flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 text-center text-sm font-black leading-snug text-white disabled:opacity-60 sm:min-w-32">
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{editing ? "Enregistrer" : "Créer la tâche"}
                   </button>
                 </div>
@@ -1757,8 +1757,8 @@ export function TasksWorkspace() {
             <h3 className="mt-4 text-xl font-black text-[var(--opc-ink)]">Supprimer cette tâche ?</h3>
             <p className="mt-2 text-sm text-slate-600">« {taskToDelete.title} » sera supprimée définitivement. Cette action est irréversible.</p>
             <div className="mt-6 flex justify-end gap-3">
-              <button type="button" disabled={deleting} onClick={() => setTaskToDelete(null)} className="rounded-xl border border-[var(--opc-border)] px-5 py-3 text-sm font-bold text-slate-600">Annuler</button>
-              <button type="button" disabled={deleting} onClick={() => void confirmDelete()} className="flex items-center gap-2 rounded-xl bg-[var(--opc-red)] px-5 py-3 text-sm font-black text-white disabled:opacity-60">
+              <button type="button" disabled={deleting} onClick={() => setTaskToDelete(null)} className="h-11 min-w-28 rounded-xl border border-[var(--opc-border)] px-4 text-sm font-bold text-slate-600">Annuler</button>
+              <button type="button" disabled={deleting} onClick={() => void confirmDelete()} className="flex h-11 min-w-28 items-center justify-center gap-2 rounded-xl bg-[var(--opc-red)] px-4 text-sm font-black text-white disabled:opacity-60">
                 {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Supprimer
               </button>
             </div>
