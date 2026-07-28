@@ -26,8 +26,10 @@ import {
 import { getTaskDocumentPreview } from "@/app/documents/actions";
 import {
   createTaskProgressUpdate,
+  deleteTaskProgressPhoto,
   getTaskProgressPhotoUrls,
 } from "@/app/tasks/actions";
+import { ConfirmDeleteDialog } from "@/components/ui/ConfirmDeleteDialog";
 import { createClient } from "@/lib/supabase/client";
 import type { Activity } from "@/types/activity";
 import type {
@@ -154,6 +156,10 @@ export function TasksWorkspace() {
   const [nextSteps, setNextSteps] = useState("");
   const [progressComment, setProgressComment] = useState("");
   const [progressPhotos, setProgressPhotos] = useState<File[]>([]);
+  const [photoToDelete, setPhotoToDelete] = useState<TaskProgressPhoto | null>(
+    null,
+  );
+  const [photoDeleting, setPhotoDeleting] = useState(false);
 
   async function loadData(silent = false) {
     if (!silent) setLoading(true);
@@ -585,6 +591,20 @@ export function TasksWorkspace() {
       await Promise.all([loadTaskProgress(editing.id), loadData(true)]);
     }
     setProgressSaving(false);
+  }
+
+  async function confirmPhotoDelete() {
+    if (!photoToDelete || !editing) return;
+    setPhotoDeleting(true);
+    setError("");
+    const result = await deleteTaskProgressPhoto(photoToDelete.id);
+    if (!result.success) {
+      setError(result.error);
+    } else {
+      setPhotoToDelete(null);
+      await loadTaskProgress(editing.id);
+    }
+    setPhotoDeleting(false);
   }
 
   async function confirmDelete() {
@@ -1045,11 +1065,20 @@ export function TasksWorkspace() {
                           {update.photos?.length ? (
                             <div className="mt-3 grid grid-cols-3 gap-2">
                               {update.photos.map((photo) => (
-                                <div key={photo.id} className="aspect-square overflow-hidden rounded-lg bg-slate-100">
+                                <div key={photo.id} className="group relative aspect-square overflow-hidden rounded-lg bg-slate-100">
                                   {progressPhotoUrls[photo.file_path] ? (
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img src={progressPhotoUrls[photo.file_path]} alt={photo.caption || `Avancement du ${update.update_date}`} className="h-full w-full object-cover" />
                                   ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={() => setPhotoToDelete(photo)}
+                                    className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-lg bg-white/95 text-[var(--opc-red)] opacity-0 shadow-md transition group-hover:opacity-100 focus:opacity-100"
+                                    aria-label="Supprimer cette photo"
+                                    title="Supprimer la photo"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
                                 </div>
                               ))}
                             </div>
@@ -1285,6 +1314,18 @@ export function TasksWorkspace() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmDeleteDialog
+        open={Boolean(photoToDelete)}
+        title="Supprimer cette photo ?"
+        description="La photo sera retirée du journal d’avancement et des prochains rapports."
+        subject={photoToDelete?.caption || "Photo d’avancement"}
+        deleting={photoDeleting}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPhotoToDelete(null);
+        }}
+        onConfirm={confirmPhotoDelete}
+      />
 
       <style jsx>{`.input{width:100%;border:1px solid var(--opc-border);border-radius:.75rem;background:white;padding:.75rem .875rem;font-size:.875rem;outline:none}.input:focus{border-color:var(--opc-blue);box-shadow:0 0 0 4px rgba(0,80,164,.08)}`}</style>
     </div>

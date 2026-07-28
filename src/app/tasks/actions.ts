@@ -162,3 +162,38 @@ export async function getTaskProgressPhotoUrls(
   );
   return Object.fromEntries(entries.filter(([, url]) => Boolean(url)));
 }
+
+export async function deleteTaskProgressPhoto(
+  photoId: string,
+): Promise<TaskProgressActionResult> {
+  const parsedId = z.string().uuid().safeParse(photoId);
+  if (!parsedId.success) {
+    return { success: false, error: "Photo invalide." };
+  }
+
+  const supabase = await createClient();
+  const photoResult = await supabase
+    .from("task_progress_photos")
+    .select("id,file_path")
+    .eq("id", parsedId.data)
+    .maybeSingle();
+  if (photoResult.error || !photoResult.data) {
+    return { success: false, error: "La photo est introuvable." };
+  }
+
+  const deleteResult = await supabase
+    .from("task_progress_photos")
+    .delete()
+    .eq("id", parsedId.data);
+  if (deleteResult.error) {
+    return { success: false, error: deleteResult.error.message };
+  }
+
+  await supabase.storage
+    .from("task-progress")
+    .remove([photoResult.data.file_path]);
+
+  revalidatePath("/tasks");
+  revalidatePath("/reporting");
+  return { success: true };
+}

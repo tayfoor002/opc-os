@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CalendarDays, CheckCircle2, CirclePlus, Edit3, FileText, Loader2, Search, Trash2, X } from "lucide-react";
 import { ActivityDetailsDrawer } from "@/components/planning/ActivityDetailsDrawer";
+import { ConfirmDeleteDialog } from "@/components/ui/ConfirmDeleteDialog";
 import { createClient } from "@/lib/supabase/client";
 import type { Activity, ActivityFormValues, ActivityStatus } from "@/types/activity";
 import type { CollaboratorOption, PhaseOption, ZoneElementOption, ZoneOption } from "@/types/organization";
@@ -34,6 +35,8 @@ export function ActivitiesWorkspace() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Activity | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
+  const [activityToDelete, setActivityToDelete] = useState<Activity | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState<ActivityFormValues>(emptyForm);
 
   async function loadActivities() {
@@ -150,10 +153,23 @@ export function ActivitiesWorkspace() {
     setSaving(false);
   }
 
-  async function deleteActivity(activity: Activity) {
-    if (!window.confirm(`Supprimer l'activité ${activity.code} — ${activity.name} ?`)) return;
-    const result = await supabase.from("activities").delete().eq("id", activity.id);
-    if (result.error) setError(result.error.message); else await loadActivities();
+  async function deleteActivity() {
+    if (!activityToDelete) return;
+    setDeleting(true);
+    const result = await supabase
+      .from("activities")
+      .delete()
+      .eq("id", activityToDelete.id);
+    if (result.error) {
+      setError(result.error.message);
+    } else {
+      if (selectedActivity?.id === activityToDelete.id) {
+        setSelectedActivity(null);
+      }
+      setActivityToDelete(null);
+      await loadActivities();
+    }
+    setDeleting(false);
   }
 
   async function saveActivityDetails(updates: Partial<Activity>) {
@@ -250,7 +266,7 @@ export function ActivitiesWorkspace() {
                     <td className="px-5 py-4"><StatusBadge status={activity.status} /></td>
                     <td className="px-5 py-4"><span className="inline-flex min-w-10 items-center justify-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-black text-[var(--opc-blue)]">{taskCounts[activity.id] ?? 0}</span></td>
                     <td className="px-5 py-4"><span className="inline-flex min-w-10 items-center justify-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-black text-violet-700"><FileText className="h-3.5 w-3.5" />{documentCounts[activity.id] ?? 0}</span></td>
-                    <td className="px-5 py-4"><div className="flex justify-end gap-2"><button type="button" onClick={(event) => { event.stopPropagation(); openEdit(activity); }} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--opc-border)] text-slate-600"><Edit3 className="h-4 w-4" /></button><button type="button" onClick={(event) => { event.stopPropagation(); void deleteActivity(activity); }} className="grid h-9 w-9 place-items-center rounded-lg border border-red-200 text-[var(--opc-red)]"><Trash2 className="h-4 w-4" /></button></div></td>
+                    <td className="px-5 py-4"><div className="flex justify-end gap-2"><button type="button" onClick={(event) => { event.stopPropagation(); openEdit(activity); }} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--opc-border)] text-slate-600"><Edit3 className="h-4 w-4" /></button><button type="button" onClick={(event) => { event.stopPropagation(); setActivityToDelete(activity); }} className="grid h-9 w-9 place-items-center rounded-lg border border-red-200 text-[var(--opc-red)]"><Trash2 className="h-4 w-4" /></button></div></td>
                   </tr>
                 ))}
                 {filtered.length === 0 ? <tr><td colSpan={10} className="px-5 py-16 text-center text-sm text-slate-400">Aucune activité trouvée.</td></tr> : null}
@@ -319,6 +335,22 @@ export function ActivitiesWorkspace() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmDeleteDialog
+        open={Boolean(activityToDelete)}
+        title="Supprimer cette activité ?"
+        description="L’activité et les liaisons qui en dépendent seront supprimées."
+        subject={
+          activityToDelete
+            ? `${activityToDelete.code} — ${activityToDelete.name}`
+            : undefined
+        }
+        deleting={deleting}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setActivityToDelete(null);
+        }}
+        onConfirm={deleteActivity}
+      />
 
       <style jsx>{`.input{width:100%;border:1px solid var(--opc-border);border-radius:.75rem;background:white;padding:.75rem .875rem;font-size:.875rem;outline:none}.input:focus{border-color:var(--opc-blue);box-shadow:0 0 0 4px rgba(0,80,164,.08)}`}</style>
     </div>
