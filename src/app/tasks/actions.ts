@@ -9,6 +9,7 @@ const updateSchema = z.object({
   task_id: z.string().uuid(),
   update_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   progress: z.coerce.number().min(0).max(100),
+  completed_quantity: z.coerce.number().min(0).optional(),
   work_done: z.string().trim().max(5000).optional(),
   ongoing_work: z.string().trim().max(5000).optional(),
   blockers: z.string().trim().max(5000).optional(),
@@ -57,11 +58,38 @@ export async function createTaskProgressUpdate(
   const supabase = await createClient();
   const taskResult = await supabase
     .from("tasks")
-    .select("id,project_id,status")
+    .select(
+      "id,project_id,status,progress,progress_mode,target_quantity,completed_quantity",
+    )
     .eq("id", parsed.data.task_id)
     .maybeSingle();
   if (taskResult.error || !taskResult.data) {
     return { success: false, error: "La tâche est introuvable." };
+  }
+
+  let resolvedProgress = parsed.data.progress;
+  const taskProgressUpdate: Record<string, unknown> = {};
+  if (taskResult.data.progress_mode === "quantity") {
+    const completedQuantity = parsed.data.completed_quantity;
+    const targetQuantity = Number(taskResult.data.target_quantity ?? 0);
+    if (
+      completedQuantity === undefined ||
+      targetQuantity <= 0 ||
+      completedQuantity > targetQuantity
+    ) {
+      return {
+        success: false,
+        error:
+          "La quantité réalisée doit être comprise entre 0 et la quantité totale.",
+      };
+    }
+    resolvedProgress = Math.min(
+      100,
+      Math.round((completedQuantity / targetQuantity) * 10_000) / 100,
+    );
+    taskProgressUpdate.completed_quantity = completedQuantity;
+  } else if (taskResult.data.progress_mode === "building") {
+    resolvedProgress = Number(taskResult.data.progress ?? 0);
   }
 
   const insertResult = await supabase
@@ -70,7 +98,7 @@ export async function createTaskProgressUpdate(
       project_id: taskResult.data.project_id,
       task_id: parsed.data.task_id,
       update_date: parsed.data.update_date,
-      progress: parsed.data.progress,
+      progress: resolvedProgress,
       work_done: parsed.data.work_done || null,
       ongoing_work: parsed.data.ongoing_work || null,
       blockers: parsed.data.blockers || null,
@@ -125,16 +153,20 @@ export async function createTaskProgressUpdate(
   }
 
   const nextStatus =
-    parsed.data.progress >= 100
+    resolvedProgress >= 100
       ? "done"
-      : parsed.data.progress > 0
+      : resolvedProgress > 0
         ? taskResult.data.status === "blocked"
           ? "blocked"
           : "in_progress"
         : taskResult.data.status;
   const taskUpdate = await supabase
     .from("tasks")
-    .update({ progress: parsed.data.progress, status: nextStatus })
+    .update({
+      ...taskProgressUpdate,
+      progress: resolvedProgress,
+      status: nextStatus,
+    })
     .eq("id", parsed.data.task_id);
   if (taskUpdate.error) {
     return { success: false, error: taskUpdate.error.message };

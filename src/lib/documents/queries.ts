@@ -14,6 +14,10 @@ export type DocumentListItem = {
   revision: string | null;
   status: string | null;
   category: string | null;
+  document_type: string;
+  document_subcategory: string | null;
+  execution_status: string;
+  created_at: string;
 };
 
 export type DocumentProject = {
@@ -52,7 +56,7 @@ export type DocumentAccess = {
 };
 
 const DOCUMENT_COLUMNS =
-  "id, reference, title, revision, status, category";
+  "id, reference, title, revision, status, category, document_type, document_subcategory, execution_status, created_at";
 
 const DOCUMENT_DETAILS_COLUMNS = `
   id,
@@ -62,6 +66,9 @@ const DOCUMENT_DETAILS_COLUMNS = `
   revision,
   status,
   category,
+  document_type,
+  document_subcategory,
+  execution_status,
   company,
   comments,
   document_date,

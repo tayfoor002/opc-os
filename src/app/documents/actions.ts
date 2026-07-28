@@ -32,6 +32,22 @@ const documentMetadataSchema = z.object({
   revision: nullableText(50),
   status: z.string().trim().min(1, "Le statut est obligatoire.").max(80),
   category: nullableText(120),
+  document_type: z.enum([
+    "plan",
+    "procedure",
+    "pv",
+    "icp",
+    "pvi",
+    "ndc",
+    "other",
+  ]),
+  document_subcategory: nullableText(120),
+  execution_status: z.enum([
+    "not_applicable",
+    "pending",
+    "approved",
+    "rejected",
+  ]),
   company: nullableText(160),
   comments: nullableText(4000),
   document_date: z.preprocess(

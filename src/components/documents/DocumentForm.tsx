@@ -209,17 +209,97 @@ export function DocumentForm({
         </Field>
 
         <Field
-          label="Catégorie"
-          htmlFor="document-category"
-          error={fieldErrors.category?.[0]}
+          label="Type de document"
+          htmlFor="document-type"
+          error={fieldErrors.document_type?.[0]}
         >
-          <Input
-            id="document-category"
-            value={values.category}
-            onChange={(event) => setValue("category", event.target.value)}
+          <select
+            id="document-type"
+            value={values.document_type}
+            onChange={(event) => {
+              const documentType = event.target.value;
+              setValues((current) => ({
+                ...current,
+                document_type: documentType,
+                document_subcategory: "",
+                execution_status:
+                  documentType === "plan" ? "pending" : "not_applicable",
+              }));
+            }}
             disabled={isSaving}
-          />
+            className="h-9 w-full rounded-3xl border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+          >
+            <option value="plan">Plan</option>
+            <option value="procedure">Procédure</option>
+            <option value="pv">PV</option>
+            <option value="icp">ICP</option>
+            <option value="pvi">PVI</option>
+            <option value="ndc">NDC — Note de calcul</option>
+            <option value="other">Autre</option>
+          </select>
         </Field>
+
+        {values.document_type === "plan" ||
+        values.document_type === "procedure" ? (
+          <Field
+            label="Sous-catégorie"
+            htmlFor="document-subcategory"
+            error={fieldErrors.document_subcategory?.[0]}
+          >
+            <select
+              id="document-subcategory"
+              value={values.document_subcategory}
+              onChange={(event) =>
+                setValue("document_subcategory", event.target.value)
+              }
+              disabled={isSaving}
+              className="h-9 w-full rounded-3xl border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+            >
+              <option value="">À définir</option>
+              {values.document_type === "plan" ? (
+                <>
+                  <option value="plan_pose">Plan de pose</option>
+                  <option value="plan_deroulage">Plan de déroulage</option>
+                  <option value="tcr_plan">TCR Plan</option>
+                  <option value="gc_plan">GC Plan</option>
+                </>
+              ) : (
+                <>
+                  <option value="gc">Génie civil</option>
+                  <option value="installation_poste">
+                    Installation poste
+                  </option>
+                  <option value="installation_campagne">
+                    Installation campagne
+                  </option>
+                  <option value="vt">Vérification technique</option>
+                </>
+              )}
+            </select>
+          </Field>
+        ) : null}
+
+        {values.document_type === "plan" ? (
+          <Field
+            label="Statut pour exécution"
+            htmlFor="document-execution-status"
+            error={fieldErrors.execution_status?.[0]}
+          >
+            <select
+              id="document-execution-status"
+              value={values.execution_status}
+              onChange={(event) =>
+                setValue("execution_status", event.target.value)
+              }
+              disabled={isSaving}
+              className="h-9 w-full rounded-3xl border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+            >
+              <option value="pending">En attente de validation</option>
+              <option value="approved">Bon pour exécution</option>
+              <option value="rejected">Non bon pour exécution</option>
+            </select>
+          </Field>
+        ) : null}
 
         <Field
           label="Entreprise"

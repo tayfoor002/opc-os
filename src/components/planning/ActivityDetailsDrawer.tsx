@@ -38,6 +38,7 @@ type ActivityTask = {
   start_date: string | null;
   due_date: string | null;
   status: "todo" | "in_progress" | "blocked" | "done";
+  progress: number;
   alstom_supervisor_id: string | null;
   avanzit_site_manager_id: string | null;
   documents?: TaskLinkedDocument[];
@@ -121,7 +122,6 @@ export function ActivityDetailsDrawer({
   const [materialQuantity, setMaterialQuantity] = useState("1");
   const [newDocument, setNewDocument] = useState("");
   const [newDocumentUrl, setNewDocumentUrl] = useState("");
-  const [progressNote, setProgressNote] = useState("");
   const [quickSaving, setQuickSaving] = useState(false);
 
   useEffect(() => {
@@ -141,7 +141,7 @@ export function ActivityDetailsDrawer({
     setLinkedError("");
 
     const [taskResult, materialResult, documentResult, progressResult, collaboratorsResult] = await Promise.all([
-      supabase.from("tasks").select("id,title,owner,start_date,due_date,status,alstom_supervisor_id,avanzit_site_manager_id").eq("activity_id", activityId).order("created_at", { ascending: false }),
+      supabase.from("tasks").select("id,title,owner,start_date,due_date,status,progress,alstom_supervisor_id,avanzit_site_manager_id").eq("activity_id", activityId).order("created_at", { ascending: false }),
       supabase.from("activity_materials").select("id,name,quantity,unit,supplier,delivery_status").eq("activity_id", activityId).order("created_at", { ascending: false }),
       supabase.from("activity_documents").select("id,name,document_type,url,created_at").eq("activity_id", activityId).order("created_at", { ascending: false }),
       supabase.from("activity_progress_updates").select("id,progress,note,update_date").eq("activity_id", activityId).order("update_date", { ascending: false }),
@@ -234,7 +234,12 @@ export function ActivityDetailsDrawer({
       .join(", ") || "Aucun responsable affecté";
 
   const completedTasks = tasks.filter((item) => item.status === "done").length;
-  const taskProgress = tasks.length ? Math.round((completedTasks / tasks.length) * 100) : 0;
+  const taskProgress = tasks.length
+    ? Math.round(
+        tasks.reduce((sum, task) => sum + Number(task.progress ?? 0), 0) /
+          tasks.length,
+      )
+    : 0;
   const uniqueTaskDocuments = Array.from(
     taskDocuments
       .reduce<
@@ -317,23 +322,6 @@ export function ActivityDetailsDrawer({
     setQuickSaving(false);
   }
 
-  async function saveProgressUpdate() {
-    setQuickSaving(true);
-    const result = await supabase.from("activity_progress_updates").insert({
-      project_id: currentActivity.project_id,
-      activity_id: currentActivity.id,
-      progress,
-      note: progressNote.trim() || null,
-    });
-    if (result.error) setLinkedError(result.error.message);
-    else {
-      await onSave({ progress, status });
-      setProgressNote("");
-      await loadLinkedData(currentActivity.id);
-    }
-    setQuickSaving(false);
-  }
-
   return (
     <>
       <button type="button" aria-label="Fermer les détails" onClick={onClose} className="fixed inset-0 z-40 bg-slate-950/20 backdrop-blur-[1px]" />
@@ -397,8 +385,8 @@ export function ActivityDetailsDrawer({
 
               <section className="rounded-2xl border border-[var(--opc-border)] p-4">
                 <div className="flex items-center justify-between"><label className="text-sm font-black">Avancement</label><span className="text-sm font-black text-[var(--opc-blue)]">{progress} %</span></div>
-                <input type="range" min={0} max={100} step={5} value={progress} onChange={(event) => setProgress(Number(event.target.value))} className="mt-4 w-full accent-[var(--opc-blue)]" />
-                {tasks.length ? <p className="mt-2 text-xs font-semibold text-slate-500">Avancement calculé par les tâches : {taskProgress} %</p> : null}
+                <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-[var(--opc-blue)]" style={{ width: `${progress}%` }} /></div>
+                <p className="mt-2 text-xs font-semibold text-slate-500">Valeur verrouillée, calculée par la moyenne des tâches : {taskProgress} %.</p>
               </section>
 
               <section className="rounded-2xl border border-[var(--opc-border)] p-4">
@@ -519,10 +507,9 @@ export function ActivityDetailsDrawer({
           {!loadingLinkedData && tab === "progress" ? (
             <LinkedSection title="Journal d'avancement" description="Chaque mise à jour est historisée et synchronisée avec l'activité.">
               <div className="rounded-2xl border border-[var(--opc-border)] p-4">
-                <div className="flex items-center justify-between"><label className="text-sm font-black">Nouvel avancement</label><span className="text-sm font-black text-[var(--opc-blue)]">{progress} %</span></div>
-                <input type="range" min={0} max={100} step={5} value={progress} onChange={(event) => setProgress(Number(event.target.value))} className="mt-4 w-full accent-[var(--opc-blue)]" />
-                <textarea value={progressNote} onChange={(event) => setProgressNote(event.target.value)} placeholder="Commentaire de suivi..." rows={3} className="mt-3 w-full rounded-xl border border-[var(--opc-border)] px-3 py-2.5 text-sm" />
-                <button type="button" disabled={quickSaving} onClick={() => void saveProgressUpdate()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 py-2.5 text-sm font-black text-white disabled:opacity-50"><Save className="h-4 w-4" />Enregistrer la mise à jour</button>
+                <div className="flex items-center justify-between"><label className="text-sm font-black">Avancement calculé</label><span className="text-xl font-black text-[var(--opc-blue)]">{progress} %</span></div>
+                <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-[var(--opc-blue)]" style={{ width: `${progress}%` }} /></div>
+                <p className="mt-3 text-xs text-slate-500">Mettez à jour les quantités ou les phases dans les tâches pour faire évoluer cette activité.</p>
               </div>
               <div className="mt-4 space-y-2">
                 {progressUpdates.length ? progressUpdates.map((item) => (
@@ -554,7 +541,7 @@ export function ActivityDetailsDrawer({
 
         <div className="grid grid-cols-2 gap-3 border-t border-[var(--opc-border)] p-5">
           <button type="button" onClick={onClose} className="rounded-xl border border-[var(--opc-border)] px-4 py-3 text-sm font-bold text-slate-600">Fermer</button>
-          <button type="button" disabled={saving} onClick={() => void onSave({ progress, status })} className="flex items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 py-3 text-sm font-bold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Enregistrement..." : "Enregistrer"}</button>
+          <button type="button" disabled={saving} onClick={() => void onSave({ status })} className="flex items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 py-3 text-sm font-bold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Enregistrement..." : "Enregistrer"}</button>
         </div>
       </aside>
     </>

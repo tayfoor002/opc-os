@@ -500,7 +500,14 @@ function GanttView({
             const clippedFinish = actualFinish > rangeEnd ? rangeEnd : actualFinish;
             const offset = differenceInDays(rangeStart, clippedStart);
             const duration = Math.max(1, differenceInDays(clippedStart, clippedFinish) + 1);
-            const barClass = activity.status === "completed" ? "bg-emerald-600" : activity.status === "blocked" ? "bg-red-600" : activity.critical ? "bg-orange-500" : "bg-[var(--opc-blue)]";
+            const colorFamily =
+              activity.status === "completed"
+                ? { activity: "bg-emerald-600", task: "bg-emerald-400" }
+                : activity.status === "blocked"
+                  ? { activity: "bg-red-600", task: "bg-red-400" }
+                  : activity.critical
+                    ? { activity: "bg-orange-500", task: "bg-orange-300" }
+                    : { activity: "bg-blue-700", task: "bg-blue-400" };
             const activityTasks = tasks.filter((task) => {
               if (
                 task.activity_id !== activity.id ||
@@ -520,7 +527,7 @@ function GanttView({
               </div>
               <button type="button" onClick={() => onOpen(activity)} className="relative h-14 border-b border-slate-100 text-left hover:bg-blue-50/20" style={{ backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth}px)`, backgroundSize: `${cellWidth}px 100%` }}>
                 {todayVisible ? <div className="pointer-events-none absolute inset-y-0 z-10 border-l-2 border-red-500/80" style={{ left: `${todayOffset * dayWidth}px` }} /> : null}
-                <div className={`absolute top-2.5 h-9 overflow-hidden rounded-lg shadow-sm ${barClass}`} style={{ left: `${offset * dayWidth}px`, width: `${Math.max(4, duration * dayWidth)}px` }} title={`${activity.name} · ${formatShortDate(activity.start_date)} → ${formatShortDate(activity.finish_date)}`}>
+                <div className={`absolute top-2.5 h-9 overflow-hidden rounded-lg shadow-sm ${colorFamily.activity}`} style={{ left: `${offset * dayWidth}px`, width: `${Math.max(4, duration * dayWidth)}px` }} title={`${activity.name} · ${formatShortDate(activity.start_date)} → ${formatShortDate(activity.finish_date)}`}>
                   <div className="absolute inset-y-0 left-0 bg-black/20" style={{ width: `${Math.min(100, Math.max(0, activity.progress))}%` }} />
                   <span className="relative z-10 flex h-full items-center whitespace-nowrap px-2 text-[10px] font-black text-white">{activity.progress}% · {formatShortDate(activity.start_date)} → {formatShortDate(activity.finish_date)}</span>
                 </div>
@@ -541,23 +548,16 @@ function GanttView({
                       1,
                       differenceInDays(taskClippedStart, taskClippedFinish) + 1,
                     );
-                    const taskBarClass =
-                      task.status === "done"
-                        ? "bg-emerald-500"
-                        : task.status === "blocked"
-                          ? "bg-red-500"
-                          : task.status === "in_progress"
-                            ? "bg-violet-600"
-                            : "bg-violet-400";
+                    const taskBarClass = colorFamily.task;
 
                     return (
                       <Fragment key={task.id}>
                         <a
                           href={`/tasks?activity=${activity.id}`}
-                          className="sticky left-0 z-20 flex h-11 min-w-0 items-center border-b border-r border-slate-100 bg-slate-50 px-4 pl-8 hover:bg-violet-50"
+                          className="sticky left-0 z-20 flex h-11 min-w-0 items-center border-b border-r border-slate-100 bg-slate-50 px-4 pl-8 hover:bg-blue-50"
                           title={task.title}
                         >
-                          <span className="mr-2 text-xs font-black text-violet-500">↳</span>
+                          <span className="mr-2 text-xs font-black text-blue-500">↳</span>
                           <span className="truncate text-xs font-bold text-slate-700">
                             {task.title}
                           </span>
@@ -584,7 +584,7 @@ function GanttView({
                             title={`${task.title} · ${formatShortDate(task.start_date)} → ${formatShortDate(task.due_date)}`}
                           >
                             <span className="flex h-full items-center whitespace-nowrap px-2 text-[10px] font-black text-white">
-                              {formatShortDate(task.start_date)} → {formatShortDate(task.due_date)}
+                              {task.progress}% · {formatShortDate(task.start_date)} → {formatShortDate(task.due_date)}
                             </span>
                           </div>
                         </div>
@@ -603,7 +603,7 @@ function GanttView({
         <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-orange-500" /> Critique</span>
         <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-red-600" /> Bloquée</span>
         <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-600" /> Terminée</span>
-        {showTasks ? <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-violet-500" /> Tasks</span> : null}
+        {showTasks ? <span>Les tasks utilisent une nuance claire de leur activité parente</span> : null}
         <span className="text-red-600">│ J+0 = aujourd’hui</span>
       </div>
     </div>

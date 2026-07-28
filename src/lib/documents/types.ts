@@ -38,6 +38,9 @@ export type DocumentEditValues = {
   revision: string;
   status: string;
   category: string;
+  document_type: string;
+  document_subcategory: string;
+  execution_status: string;
   company: string;
   comments: string;
   document_date: string;

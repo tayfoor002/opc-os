@@ -219,7 +219,7 @@ export function ActivitiesWorkspace() {
       project_id: projectId, code: form.code.trim(), name: form.name.trim(), zone: element?.name ?? zone?.name ?? (form.zone.trim() || null),
       zone_id: form.zone_id || null, phase_id: form.phase_id || null, zone_element_id: form.zone_element_id || null,
       start_date: form.start_date || null, finish_date: form.finish_date || null,
-      progress: Number(form.progress), status: form.status, critical: form.critical,
+      status: form.status, critical: form.critical,
     };
     const result = editing
       ? await supabase.from("activities").update(payload).eq("id", editing.id)
@@ -428,7 +428,11 @@ export function ActivitiesWorkspace() {
                 </Field>
                 <Field label="Date de début"><input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className="input" /></Field>
                 <Field label="Date de fin"><input type="date" value={form.finish_date} onChange={(e) => setForm({ ...form, finish_date: e.target.value })} className="input" /></Field>
-                <Field label="Avancement (%)"><input type="number" min={0} max={100} value={form.progress} onChange={(e) => setForm({ ...form, progress: Number(e.target.value) })} className="input" /></Field>
+                <Field label="Avancement calculé">
+                  <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-black text-[var(--opc-blue)]">
+                    {form.progress}% · moyenne automatique des tâches
+                  </div>
+                </Field>
                 <Field label="Statut"><select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as ActivityStatus })} className="input">{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
               </div>
               <label className="mt-5 flex cursor-pointer items-center gap-3 rounded-xl border border-red-100 bg-[var(--opc-red-soft)] p-4"><input type="checkbox" checked={form.critical} onChange={(e) => setForm({ ...form, critical: e.target.checked })} className="h-5 w-5 accent-[var(--opc-red)]" /><span className="text-sm font-black text-[var(--opc-red)]">Activité critique</span></label>

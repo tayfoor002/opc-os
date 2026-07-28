@@ -49,6 +49,11 @@ const emptyForm: TaskFormValues = {
   due_date: "",
   priority: "medium",
   status: "todo",
+  progress_mode: "manual",
+  work_type: "standard",
+  target_quantity: null,
+  completed_quantity: 0,
+  progress_unit: "%",
   activity_id: "",
   zone_id: "",
   phase_id: "",
@@ -86,6 +91,15 @@ type TaskProgressUpdate = {
   next_steps: string | null;
   comment: string | null;
   photos: TaskProgressPhoto[];
+};
+
+type TaskBuildingPhase = {
+  id: string;
+  code: string;
+  label: string;
+  weight: number;
+  progress: number;
+  sort_order: number;
 };
 
 type TaskPrerequisiteSummary = {
@@ -162,6 +176,8 @@ export function TasksWorkspace() {
   const [progressSaving, setProgressSaving] = useState(false);
   const [progressDate, setProgressDate] = useState(new Date().toISOString().slice(0, 10));
   const [progressValue, setProgressValue] = useState(0);
+  const [progressQuantity, setProgressQuantity] = useState(0);
+  const [buildingPhases, setBuildingPhases] = useState<TaskBuildingPhase[]>([]);
   const [workDone, setWorkDone] = useState("");
   const [ongoingWork, setOngoingWork] = useState("");
   const [blockers, setBlockers] = useState("");
@@ -343,13 +359,38 @@ export function TasksWorkspace() {
   const currentTaskProgress = Number(
     progressUpdates[0]?.progress ?? editing?.progress ?? 0,
   );
+  const quantityProgress =
+    form.progress_mode === "quantity" && Number(form.target_quantity) > 0
+      ? Math.min(
+          100,
+          Math.round(
+            (progressQuantity / Number(form.target_quantity)) * 10_000,
+          ) / 100,
+        )
+      : 0;
+  const buildingProgress = buildingPhases.length
+    ? Math.round(
+        (buildingPhases.reduce(
+          (sum, phase) => sum + phase.progress * phase.weight,
+          0,
+        ) /
+          buildingPhases.reduce((sum, phase) => sum + phase.weight, 0)) *
+          100,
+      ) / 100
+    : currentTaskProgress;
+  const effectiveProgress =
+    form.progress_mode === "quantity"
+      ? quantityProgress
+      : form.progress_mode === "building"
+        ? buildingProgress
+        : currentTaskProgress;
   const previousTaskProgress = Number(progressUpdates[1]?.progress ?? 0);
   const latestProgressIncrease = Math.max(
     0,
     currentTaskProgress - previousTaskProgress,
   );
   const activityProgressContribution =
-    currentTaskProgress / editingActivityTaskCount;
+    effectiveProgress / editingActivityTaskCount;
 
   const visibleDocuments = useMemo(() => {
     const normalizedQuery = documentQuery.trim().toLowerCase();
@@ -411,19 +452,36 @@ export function TasksWorkspace() {
     });
     setDocumentQuery("");
     setProgressUpdates([]);
+    setBuildingPhases([]);
     setDrawerOpen(true);
   }
 
   async function loadTaskProgress(taskId: string) {
-    const result = await supabase
-      .from("task_progress_updates")
-      .select("id,update_date,progress,work_done,ongoing_work,blockers,next_steps,comment,photos:task_progress_photos(id,file_path,caption)")
-      .eq("task_id", taskId)
-      .order("update_date", { ascending: false })
-      .order("created_at", { ascending: false });
+    const [result, phasesResult] = await Promise.all([
+      supabase
+        .from("task_progress_updates")
+        .select("id,update_date,progress,work_done,ongoing_work,blockers,next_steps,comment,photos:task_progress_photos(id,file_path,caption)")
+        .eq("task_id", taskId)
+        .order("update_date", { ascending: false })
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("task_building_phases")
+        .select("id,code,label,weight,progress,sort_order")
+        .eq("task_id", taskId)
+        .order("sort_order"),
+    ]);
     if (result.error) {
       setError(`Journal d’avancement indisponible : ${result.error.message}`);
       return;
+    }
+    if (!phasesResult.error) {
+      setBuildingPhases(
+        (phasesResult.data ?? []).map((phase) => ({
+          ...phase,
+          weight: Number(phase.weight),
+          progress: Number(phase.progress),
+        })) as TaskBuildingPhase[],
+      );
     }
     const loaded = (result.data ?? []) as unknown as TaskProgressUpdate[];
     setProgressUpdates(loaded);
@@ -433,9 +491,10 @@ export function TasksWorkspace() {
     setProgressPhotoUrls(await getTaskProgressPhotoUrls(paths));
   }
 
-  function resetProgressForm(progress = 0) {
+  function resetProgressForm(progress = 0, quantity = 0) {
     setProgressDate(new Date().toISOString().slice(0, 10));
     setProgressValue(progress);
+    setProgressQuantity(quantity);
     setWorkDone("");
     setOngoingWork("");
     setBlockers("");
@@ -454,6 +513,11 @@ export function TasksWorkspace() {
       due_date: task.due_date ?? "",
       priority: task.priority,
       status: task.status,
+      progress_mode: task.progress_mode ?? "manual",
+      work_type: task.work_type ?? "standard",
+      target_quantity: task.target_quantity,
+      completed_quantity: Number(task.completed_quantity ?? 0),
+      progress_unit: task.progress_unit ?? "%",
       activity_id: task.activity_id ?? "",
       zone_id: task.zone_id ?? "",
       phase_id: task.phase_id ?? "",
@@ -463,7 +527,10 @@ export function TasksWorkspace() {
       document_ids: task.document_ids ?? [],
     });
     setDocumentQuery("");
-    resetProgressForm(Number(task.progress ?? 0));
+    resetProgressForm(
+      Number(task.progress ?? 0),
+      Number(task.completed_quantity ?? 0),
+    );
     void loadTaskProgress(task.id);
     setDrawerOpen(true);
   }
@@ -475,6 +542,7 @@ export function TasksWorkspace() {
     setForm(emptyForm);
     setDocumentQuery("");
     setProgressUpdates([]);
+    setBuildingPhases([]);
   }
 
   async function openDocumentPreview(document: TaskDocumentOption) {
@@ -511,6 +579,13 @@ export function TasksWorkspace() {
   async function saveTask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!projectId || !form.title.trim()) return;
+    if (
+      form.progress_mode === "quantity" &&
+      Number(form.target_quantity) <= 0
+    ) {
+      setError("Renseignez une longueur totale supérieure à zéro.");
+      return;
+    }
     await persistTask();
   }
 
@@ -538,6 +613,17 @@ export function TasksWorkspace() {
       due_date: form.due_date || null,
       priority: form.priority,
       status: form.status,
+      progress_mode: form.progress_mode,
+      work_type: form.work_type,
+      target_quantity:
+        form.progress_mode === "quantity"
+          ? Number(form.target_quantity)
+          : null,
+      completed_quantity:
+        form.progress_mode === "quantity"
+          ? Number(form.completed_quantity)
+          : 0,
+      progress_unit: form.progress_mode === "quantity" ? "m" : "%",
     };
 
     const result = editing
@@ -593,9 +679,18 @@ export function TasksWorkspace() {
     setProgressSaving(true);
     setError("");
     const data = new FormData();
+    const resolvedProgress =
+      form.progress_mode === "quantity"
+        ? quantityProgress
+        : form.progress_mode === "building"
+          ? buildingProgress
+          : progressValue;
     data.set("task_id", editing.id);
     data.set("update_date", progressDate);
-    data.set("progress", String(progressValue));
+    data.set("progress", String(resolvedProgress));
+    if (form.progress_mode === "quantity") {
+      data.set("completed_quantity", String(progressQuantity));
+    }
     data.set("work_done", workDone);
     data.set("ongoing_work", ongoingWork);
     data.set("blockers", blockers);
@@ -606,7 +701,30 @@ export function TasksWorkspace() {
     if (!result.success) {
       setError(result.error);
     } else {
-      resetProgressForm(progressValue);
+      resetProgressForm(resolvedProgress, progressQuantity);
+      await Promise.all([loadTaskProgress(editing.id), loadData(true)]);
+    }
+    setProgressSaving(false);
+  }
+
+  async function saveBuildingProgress() {
+    if (!editing || !buildingPhases.length) return;
+    setProgressSaving(true);
+    setError("");
+    let firstError: { message: string } | null = null;
+    for (const phase of buildingPhases) {
+      const result = await supabase
+        .from("task_building_phases")
+        .update({ progress: phase.progress })
+        .eq("id", phase.id);
+      if (result.error) {
+        firstError = result.error;
+        break;
+      }
+    }
+    if (firstError) {
+      setError(firstError.message);
+    } else {
       await Promise.all([loadTaskProgress(editing.id), loadData(true)]);
     }
     setProgressSaving(false);
@@ -745,7 +863,7 @@ export function TasksWorkspace() {
           <div className="grid min-h-72 place-items-center"><Loader2 className="h-7 w-7 animate-spin text-[var(--opc-blue)]" /></div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] border-collapse">
+            <table className="w-full min-w-[1320px] border-collapse">
               <thead>
                 <tr className="border-b border-[var(--opc-border)] bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                   <th className="px-5 py-4">Tâche</th>
@@ -753,6 +871,7 @@ export function TasksWorkspace() {
                   <th className="px-5 py-4">Activité liée</th>
                   <th className="px-5 py-4">Responsable</th>
                   <th className="px-5 py-4">Dates</th>
+                  <th className="px-5 py-4">Avancement</th>
                   <th className="px-5 py-4">Priorité</th>
                   <th className="px-5 py-4">Statut</th>
                   <th className="px-5 py-4">Prérequis</th>
@@ -865,6 +984,30 @@ export function TasksWorkspace() {
                           {overdue ? " · En retard" : ""}
                         </span>
                       </td>
+                      <td className="px-5 py-4">
+                        <div className="min-w-32">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-xs font-black text-[var(--opc-ink)]">
+                              {Math.round(Number(task.progress ?? 0) * 100) / 100}%
+                            </span>
+                            <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                              {task.progress_mode === "quantity"
+                                ? `${Number(task.completed_quantity ?? 0)} / ${Number(task.target_quantity ?? 0)} ${task.progress_unit || "m"}`
+                                : task.progress_mode === "building"
+                                  ? "Étapes GC"
+                                  : "Manuel"}
+                            </span>
+                          </div>
+                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                            <div
+                              className="h-full rounded-full bg-[var(--opc-blue)] transition-[width] duration-300"
+                              style={{
+                                width: `${Math.min(100, Math.max(0, Number(task.progress ?? 0)))}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </td>
                       <td className="px-5 py-4"><PriorityBadge priority={task.priority} /></td>
                       <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}>
                         <select
@@ -905,7 +1048,7 @@ export function TasksWorkspace() {
                 })}
 
                 {visibleTasks.length === 0 ? (
-                  <tr><td colSpan={9} className="px-5 py-16 text-center text-sm text-slate-400">Aucune tâche ne correspond aux filtres.</td></tr>
+                  <tr><td colSpan={10} className="px-5 py-16 text-center text-sm text-slate-400">Aucune tâche ne correspond aux filtres.</td></tr>
                 ) : null}
               </tbody>
             </table>
@@ -1006,6 +1149,63 @@ export function TasksWorkspace() {
                     {Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </Field>
+
+                <Field label="Type d’avancement GC">
+                  <select
+                    value={form.work_type}
+                    onChange={(event) => {
+                      const workType = event.target.value as TaskFormValues["work_type"];
+                      setForm({
+                        ...form,
+                        work_type: workType,
+                        progress_mode:
+                          workType === "gc_building"
+                            ? "building"
+                            : workType === "gc_excavation_trench" ||
+                                workType === "gc_concrete_trench"
+                              ? "quantity"
+                              : "manual",
+                        target_quantity:
+                          workType === "gc_excavation_trench" ||
+                          workType === "gc_concrete_trench"
+                            ? form.target_quantity
+                            : null,
+                        progress_unit:
+                          workType === "gc_excavation_trench" ||
+                          workType === "gc_concrete_trench"
+                            ? "m"
+                            : "%",
+                      });
+                    }}
+                    className="input"
+                  >
+                    <option value="standard">Standard — pourcentage manuel</option>
+                    <option value="gc_excavation_trench">GC — excavation de tranchée</option>
+                    <option value="gc_concrete_trench">GC — coulage béton de tranchée</option>
+                    <option value="gc_building">GC — construction guérite / local technique</option>
+                  </select>
+                </Field>
+
+                {form.progress_mode === "quantity" ? (
+                  <Field label="Longueur totale à réaliser (m)">
+                    <input
+                      type="number"
+                      required
+                      min={0.01}
+                      step={0.01}
+                      value={form.target_quantity ?? ""}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          target_quantity: event.target.value
+                            ? Number(event.target.value)
+                            : null,
+                        })
+                      }
+                      className="input"
+                    />
+                  </Field>
+                ) : null}
               </div>
 
               <div className="mt-5">
@@ -1031,7 +1231,7 @@ export function TasksWorkspace() {
                   <div className="mt-4 grid grid-cols-3 gap-3">
                     <div className="rounded-xl bg-blue-50 p-3">
                       <p className="text-[10px] font-black uppercase text-blue-500">État actuel</p>
-                      <p className="mt-1 text-2xl font-black text-blue-700">{currentTaskProgress}%</p>
+                      <p className="mt-1 text-2xl font-black text-blue-700">{effectiveProgress}%</p>
                     </div>
                     <div className="rounded-xl bg-emerald-50 p-3">
                       <p className="text-[10px] font-black uppercase text-emerald-600">Dernière hausse</p>
@@ -1044,13 +1244,101 @@ export function TasksWorkspace() {
                     </div>
                   </div>
 
+                  {form.progress_mode === "building" ? (
+                    <div className="mt-4 rounded-2xl border border-blue-100 bg-white p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="font-black">
+                            Phases de construction guérite / LT
+                          </h4>
+                          <p className="text-xs text-slate-500">
+                            L’avancement de la tâche est la moyenne pondérée de
+                            ces phases.
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">
+                          {buildingProgress}%
+                        </span>
+                      </div>
+                      <div className="mt-4 space-y-4">
+                        {buildingPhases.map((phase) => (
+                          <label key={phase.id} className="block">
+                            <span className="flex items-center justify-between gap-3 text-xs font-bold">
+                              <span>{phase.label}</span>
+                              <span>
+                                {phase.progress}% · poids {phase.weight}%
+                              </span>
+                            </span>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={5}
+                              value={phase.progress}
+                              onChange={(event) =>
+                                setBuildingPhases((current) =>
+                                  current.map((item) =>
+                                    item.id === phase.id
+                                      ? {
+                                          ...item,
+                                          progress: Number(event.target.value),
+                                        }
+                                      : item,
+                                  ),
+                                )
+                              }
+                              className="mt-2 w-full accent-[var(--opc-blue)]"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={progressSaving || !buildingPhases.length}
+                        onClick={() => void saveBuildingProgress()}
+                        className="mt-4 w-full rounded-xl bg-blue-50 px-4 py-3 text-sm font-black text-[var(--opc-blue)] disabled:opacity-50"
+                      >
+                        Enregistrer les phases de construction
+                      </button>
+                    </div>
+                  ) : null}
+
                   <div className="mt-4 grid gap-4 md:grid-cols-2">
                     <Field label="Date">
                       <input type="date" value={progressDate} onChange={(event) => setProgressDate(event.target.value)} className="input" />
                     </Field>
-                    <Field label={`Avancement — ${progressValue}%`}>
-                      <input type="range" min={0} max={100} step={5} value={progressValue} onChange={(event) => setProgressValue(Number(event.target.value))} className="mt-4 w-full accent-[var(--opc-blue)]" />
-                    </Field>
+                    {form.progress_mode === "quantity" ? (
+                      <Field
+                        label={`Longueur réalisée — ${progressQuantity} / ${
+                          form.target_quantity ?? 0
+                        } m (${quantityProgress}%)`}
+                      >
+                        <input
+                          type="number"
+                          min={0}
+                          max={form.target_quantity ?? undefined}
+                          step={0.01}
+                          value={progressQuantity}
+                          onChange={(event) =>
+                            setProgressQuantity(Number(event.target.value))
+                          }
+                          className="input"
+                        />
+                      </Field>
+                    ) : form.progress_mode === "building" ? (
+                      <Field label={`Avancement calculé — ${buildingProgress}%`}>
+                        <div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className="h-full rounded-full bg-[var(--opc-blue)]"
+                            style={{ width: `${buildingProgress}%` }}
+                          />
+                        </div>
+                      </Field>
+                    ) : (
+                      <Field label={`Avancement — ${progressValue}%`}>
+                        <input type="range" min={0} max={100} step={5} value={progressValue} onChange={(event) => setProgressValue(Number(event.target.value))} className="mt-4 w-full accent-[var(--opc-blue)]" />
+                      </Field>
+                    )}
                     <Field label="Travaux réalisés">
                       <textarea rows={3} value={workDone} onChange={(event) => setWorkDone(event.target.value)} className="input resize-none" placeholder="Ce qui a été terminé aujourd’hui..." />
                     </Field>

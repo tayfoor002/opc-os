@@ -59,6 +59,47 @@ function relationLabel(
   return [relation.code, relation.name].filter(Boolean).join(" — ");
 }
 
+function documentTypeLabel(value: string) {
+  return (
+    {
+      plan: "Plan",
+      procedure: "Procédure",
+      pv: "PV",
+      icp: "ICP",
+      pvi: "PVI",
+      ndc: "NDC — Note de calcul",
+      other: "Autre",
+    }[value] ?? value
+  );
+}
+
+function subcategoryLabel(value: string | null) {
+  if (!value) return null;
+  return (
+    {
+      plan_pose: "Plan de pose",
+      plan_deroulage: "Plan de déroulage",
+      tcr_plan: "TCR Plan",
+      gc_plan: "GC Plan",
+      gc: "Génie civil",
+      installation_poste: "Installation poste",
+      installation_campagne: "Installation campagne",
+      vt: "Vérification technique",
+    }[value] ?? value
+  );
+}
+
+function executionLabel(value: string) {
+  return (
+    {
+      pending: "En attente",
+      approved: "Bon pour exécution",
+      rejected: "Non bon pour exécution",
+      not_applicable: "Non applicable",
+    }[value] ?? value
+  );
+}
+
 export function DocumentDetailsView({
   document,
   access,
@@ -111,6 +152,9 @@ export function DocumentDetailsView({
             revision: document.revision ?? "",
             status: document.status ?? "Draft",
             category: document.category ?? "",
+            document_type: document.document_type,
+            document_subcategory: document.document_subcategory ?? "",
+            execution_status: document.execution_status,
             company: document.company ?? "",
             comments: document.comments ?? "",
             document_date: document.document_date ?? "",
@@ -133,7 +177,20 @@ export function DocumentDetailsView({
             <MetadataItem label="Référence" value={document.reference} />
             <MetadataItem label="Révision" value={document.revision} />
             <MetadataItem label="Statut" value={document.status} />
-            <MetadataItem label="Catégorie" value={document.category} />
+            <MetadataItem
+              label="Type"
+              value={documentTypeLabel(document.document_type)}
+            />
+            <MetadataItem
+              label="Sous-catégorie"
+              value={subcategoryLabel(document.document_subcategory)}
+            />
+            {document.document_type === "plan" ? (
+              <MetadataItem
+                label="Pour exécution"
+                value={executionLabel(document.execution_status)}
+              />
+            ) : null}
             <MetadataItem label="Entreprise" value={document.company} />
             <MetadataItem
               label="Date du document"
