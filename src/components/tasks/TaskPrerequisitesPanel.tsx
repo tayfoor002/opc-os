@@ -61,6 +61,9 @@ export function TaskPrerequisitesPanel({
   const [tools, setTools] = useState<Tool[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [documents, setDocuments] = useState<Option[]>([]);
+  const [certificationSuggestions, setCertificationSuggestions] = useState<
+    string[]
+  >([]);
   const [personnelLinks, setPersonnelLinks] = useState<Link[]>([]);
   const [certificationLinks, setCertificationLinks] = useState<Link[]>([]);
   const [toolLinks, setToolLinks] = useState<Link[]>([]);
@@ -90,6 +93,7 @@ export function TaskPrerequisitesPanel({
       toolsResult,
       equipmentResult,
       documentsResult,
+      certificationCatalogResult,
       personnelResult,
       certificationsResult,
       taskToolsResult,
@@ -121,6 +125,11 @@ export function TaskPrerequisitesPanel({
         .select("id,title")
         .eq("project_id", projectId)
         .order("title"),
+      supabase
+        .from("collaborator_certifications")
+        .select("certification_name")
+        .eq("project_id", projectId)
+        .order("certification_name"),
       supabase
         .from("task_personnel")
         .select("collaborator_id,collaborators(full_name,company,role)")
@@ -163,6 +172,7 @@ export function TaskPrerequisitesPanel({
       toolsResult.error,
       equipmentResult.error,
       documentsResult.error,
+      certificationCatalogResult.error,
       personnelResult.error,
       certificationsResult.error,
       taskToolsResult.error,
@@ -195,6 +205,13 @@ export function TaskPrerequisitesPanel({
         name: document.title,
       })),
     );
+    setCertificationSuggestions([
+      ...new Set(
+        (certificationCatalogResult.data ?? []).map(
+          (item) => item.certification_name,
+        ),
+      ),
+    ]);
     setPersonnelLinks(
       (personnelResult.data ?? []).map((link) => {
         const person = Array.isArray(link.collaborators)
@@ -363,6 +380,30 @@ export function TaskPrerequisitesPanel({
         </div>
       </div>
 
+      <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-4 text-xs leading-5 text-slate-700">
+        <p className="font-black text-[var(--opc-blue)]">
+          Comment la checklist devient conforme ?
+        </p>
+        <ol className="mt-1 list-decimal space-y-1 pl-4">
+          <li>
+            Affectez le personnel puis choisissez une habilitation existante
+            dans sa fiche Organization.
+          </li>
+          <li>
+            Liez les plans/procédures et choisissez les outillages ou engins :
+            leurs dates sont contrôlées automatiquement.
+          </li>
+          <li>
+            Pour les contrôles manuels, cochez la case une fois le contrôle
+            réellement réalisé.
+          </li>
+        </ol>
+        <p className="mt-2 font-bold">
+          Le bandeau passe au vert uniquement lorsque toutes les exigences sont
+          satisfaites.
+        </p>
+      </div>
+
       {error ? (
         <div className="mt-3 rounded-xl bg-red-100 p-3 text-xs font-bold text-red-700">
           {error}
@@ -402,6 +443,7 @@ export function TaskPrerequisitesPanel({
           title="Habilitations requises"
           value={certificationName}
           placeholder="Ex. Habilitation électrique B1"
+          suggestions={certificationSuggestions}
           links={certificationLinks}
           onValueChange={setCertificationName}
           onAdd={() => {
@@ -618,7 +660,10 @@ export function TaskPrerequisitesPanel({
                 />
                 <div className="min-w-0 flex-1">
                   <p className="font-bold">{link.label}</p>
-                  <p className="text-xs text-slate-500">{link.meta}</p>
+                  <p className="text-xs text-slate-500">
+                    {link.meta} ·{" "}
+                    {link.satisfied ? "Validé" : "À valider manuellement"}
+                  </p>
                 </div>
                 <DeleteButton
                   onClick={() =>
@@ -708,6 +753,7 @@ function TextPrerequisiteBlock({
   title,
   value,
   placeholder,
+  suggestions,
   links,
   onValueChange,
   onAdd,
@@ -717,6 +763,7 @@ function TextPrerequisiteBlock({
   title: string;
   value: string;
   placeholder: string;
+  suggestions?: string[];
   links: Link[];
   onValueChange: (value: string) => void;
   onAdd: () => void;
@@ -732,8 +779,16 @@ function TextPrerequisiteBlock({
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           placeholder={placeholder}
+          list={suggestions?.length ? "certification-suggestions" : undefined}
           className="min-w-0 flex-1 rounded-xl border border-[var(--opc-border)] px-3 py-2.5 text-sm"
         />
+        {suggestions?.length ? (
+          <datalist id="certification-suggestions">
+            {suggestions.map((suggestion) => (
+              <option key={suggestion} value={suggestion} />
+            ))}
+          </datalist>
+        ) : null}
         <button
           type="button"
           onClick={onAdd}
