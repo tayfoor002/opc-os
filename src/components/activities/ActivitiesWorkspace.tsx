@@ -9,9 +9,9 @@ import type { Activity, ActivityFormValues, ActivityStatus } from "@/types/activ
 import type { CollaboratorOption, PhaseOption, ZoneElementOption, ZoneOption } from "@/types/organization";
 
 const emptyForm: ActivityFormValues = {
-  code: "", name: "", zone: "", responsible: "", start_date: "", finish_date: "",
+  code: "", name: "", zone: "", start_date: "", finish_date: "",
   progress: 0, status: "not_started", critical: false, zone_id: "", phase_id: "",
-  zone_element_id: "", alstom_supervisor_id: "", avanzit_site_manager_id: "",
+  zone_element_id: "",
 };
 
 const statusLabels: Record<ActivityStatus, string> = {
@@ -27,6 +27,12 @@ export function ActivitiesWorkspace() {
   const [zoneElements, setZoneElements] = useState<ZoneElementOption[]>([]);
   const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
   const [documentCounts, setDocumentCounts] = useState<Record<string, number>>({});
+  const [taskOwners, setTaskOwners] = useState<
+    Record<string, Array<{ name: string; company: string; count: number }>>
+  >({});
+  const [prerequisiteIssues, setPrerequisiteIssues] = useState<
+    Record<string, Array<{ task: string; details: string }>>
+  >({});
   const [projectId, setProjectId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -44,9 +50,9 @@ export function ActivitiesWorkspace() {
     const projectResult = await supabase.from("projects").select("id").eq("code", "PDD").single();
     if (projectResult.error) { setError(projectResult.error.message); setLoading(false); return; }
     setProjectId(projectResult.data.id);
-    const [result, tasksResult, taskDocumentsResult, collaboratorsResult, zonesResult, phasesResult, zoneElementsResult] = await Promise.all([
+    const [result, tasksResult, taskDocumentsResult, collaboratorsResult, zonesResult, phasesResult, zoneElementsResult, prerequisiteResult] = await Promise.all([
       supabase.from("activities").select("*").eq("project_id", projectResult.data.id).order("start_date", { ascending: true }),
-      supabase.from("tasks").select("id,activity_id").eq("project_id", projectResult.data.id),
+      supabase.from("tasks").select("id,title,activity_id,alstom_supervisor_id,avanzit_site_manager_id").eq("project_id", projectResult.data.id),
       supabase
         .from("task_documents")
         .select("document_id,tasks!inner(activity_id,project_id)")
@@ -55,6 +61,7 @@ export function ActivitiesWorkspace() {
       supabase.from("zones").select("id,code,name").eq("project_id", projectResult.data.id).eq("active", true).order("sort_order"),
       supabase.from("phases").select("id,zone_id,code,name").eq("project_id", projectResult.data.id).eq("active", true).order("sort_order"),
       supabase.from("zone_elements").select("id,zone_id,code,name,element_type").eq("project_id", projectResult.data.id).eq("active", true).order("sort_order"),
+      supabase.from("task_prerequisite_status").select("task_id,activity_id,total_requirements,missing_certifications,missing_documents,invalid_tools,missing_manual_items"),
     ]);
     if (result.error) setError(result.error.message); else setActivities((result.data ?? []) as Activity[]);
     if (collaboratorsResult.error) setError(collaboratorsResult.error.message); else setCollaborators((collaboratorsResult.data ?? []) as CollaboratorOption[]);
@@ -67,6 +74,81 @@ export function ActivitiesWorkspace() {
         if (task.activity_id) counts[task.activity_id] = (counts[task.activity_id] ?? 0) + 1;
       }
       setTaskCounts(counts);
+      const peopleById = new Map(
+        (collaboratorsResult.data ?? []).map((person) => [person.id, person]),
+      );
+      const owners = new Map<
+        string,
+        Map<string, { name: string; company: string; count: number }>
+      >();
+      for (const task of tasksResult.data ?? []) {
+        if (!task.activity_id) continue;
+        for (const personId of [
+          task.alstom_supervisor_id,
+          task.avanzit_site_manager_id,
+        ]) {
+          if (!personId) continue;
+          const person = peopleById.get(personId);
+          if (!person) continue;
+          const activityOwners = owners.get(task.activity_id) ?? new Map();
+          const current = activityOwners.get(personId);
+          activityOwners.set(personId, {
+            name: person.full_name,
+            company: person.company,
+            count: (current?.count ?? 0) + 1,
+          });
+          owners.set(task.activity_id, activityOwners);
+        }
+      }
+      setTaskOwners(
+        Object.fromEntries(
+          [...owners].map(([activityId, people]) => [
+            activityId,
+            [...people.values()].sort((left, right) =>
+              left.company.localeCompare(right.company),
+            ),
+          ]),
+        ),
+      );
+    }
+    if (!prerequisiteResult.error) {
+      const taskById = new Map(
+        (tasksResult.data ?? []).map((task) => [task.id, task]),
+      );
+      const issues: Record<string, Array<{ task: string; details: string }>> = {};
+      for (const status of prerequisiteResult.data ?? []) {
+        if (!status.activity_id) continue;
+        const missing =
+          Number(status.missing_certifications) +
+          Number(status.missing_documents) +
+          Number(status.invalid_tools) +
+          Number(status.missing_manual_items);
+        if (Number(status.total_requirements) > 0 && missing === 0) continue;
+        const details =
+          Number(status.total_requirements) === 0
+            ? "Prérequis non configurés"
+            : [
+                status.missing_certifications
+                  ? `${status.missing_certifications} habilitation(s)`
+                  : "",
+                status.missing_documents
+                  ? `${status.missing_documents} document(s)`
+                  : "",
+                status.invalid_tools
+                  ? `${status.invalid_tools} outil(s)/engin(s)`
+                  : "",
+                status.missing_manual_items
+                  ? `${status.missing_manual_items} contrôle(s)`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(", ");
+        (issues[status.activity_id] ??= []).push({
+          task: taskById.get(status.task_id)?.title ?? "Tâche",
+          details,
+        });
+      }
+      setPrerequisiteIssues(issues);
     }
     if (!taskDocumentsResult.error) {
       const documentsByActivity = new Map<string, Set<string>>();
@@ -98,7 +180,7 @@ export function ActivitiesWorkspace() {
   }, []);
 
   const filtered = activities.filter((activity) =>
-    `${activity.code} ${activity.name} ${activity.zone ?? ""} ${activity.responsible ?? ""}`.toLowerCase().includes(query.toLowerCase())
+    `${activity.code} ${activity.name} ${activity.zone ?? ""}`.toLowerCase().includes(query.toLowerCase())
   );
 
   const stats = {
@@ -107,9 +189,6 @@ export function ActivitiesWorkspace() {
     critical: activities.filter((item) => item.critical).length,
     completed: activities.filter((item) => item.status === "completed").length,
   };
-  const alstomCollaborators = collaborators.filter((person) => person.company === "ALSTOM");
-  const avanzitCollaborators = collaborators.filter((person) => person.company === "AVANZIT");
-  const collaboratorName = (id: string | null) => collaborators.find((person) => person.id === id)?.full_name;
   const zoneName = (activity: Activity) =>
     zoneElements.find((element) => element.id === activity.zone_element_id)?.name
     ?? zones.find((zone) => zone.id === activity.zone_id)?.name
@@ -119,12 +198,10 @@ export function ActivitiesWorkspace() {
   function openEdit(activity: Activity) {
     setEditing(activity);
     setForm({
-      code: activity.code, name: activity.name, zone: activity.zone ?? "", responsible: activity.responsible ?? "",
+      code: activity.code, name: activity.name, zone: activity.zone ?? "",
       start_date: activity.start_date ?? "", finish_date: activity.finish_date ?? "", progress: Number(activity.progress ?? 0),
       status: activity.status, critical: activity.critical, zone_id: activity.zone_id ?? "",
       phase_id: activity.phase_id ?? "", zone_element_id: activity.zone_element_id ?? "",
-      alstom_supervisor_id: activity.alstom_supervisor_id ?? "",
-      avanzit_site_manager_id: activity.avanzit_site_manager_id ?? "",
     });
     setOpen(true);
   }
@@ -134,14 +211,9 @@ export function ActivitiesWorkspace() {
     setSaving(true); setError("");
     const zone = zones.find((item) => item.id === form.zone_id);
     const element = zoneElements.find((item) => item.id === form.zone_element_id);
-    const alstom = collaborators.find((person) => person.id === form.alstom_supervisor_id);
-    const avanzit = collaborators.find((person) => person.id === form.avanzit_site_manager_id);
-    const responsibility = [alstom?.full_name, avanzit?.full_name].filter(Boolean).join(" / ");
     const payload = {
       project_id: projectId, code: form.code.trim(), name: form.name.trim(), zone: element?.name ?? zone?.name ?? (form.zone.trim() || null),
-      responsible: responsibility || form.responsible.trim() || null,
       zone_id: form.zone_id || null, phase_id: form.phase_id || null, zone_element_id: form.zone_element_id || null,
-      alstom_supervisor_id: form.alstom_supervisor_id || null, avanzit_site_manager_id: form.avanzit_site_manager_id || null,
       start_date: form.start_date || null, finish_date: form.finish_date || null,
       progress: Number(form.progress), status: form.status, critical: form.critical,
     };
@@ -235,11 +307,15 @@ export function ActivitiesWorkspace() {
             <table className="w-full min-w-[1050px] border-collapse">
               <thead><tr className="border-b border-[var(--opc-border)] bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                 <th className="px-5 py-4">Code</th><th className="px-5 py-4">Activité</th><th className="px-5 py-4">Zone</th>
-                <th className="px-5 py-4">Responsable</th><th className="px-5 py-4">Dates</th><th className="px-5 py-4">Avancement</th>
+                <th className="px-5 py-4">Responsables des tâches / prérequis</th><th className="px-5 py-4">Dates</th><th className="px-5 py-4">Avancement</th>
                 <th className="px-5 py-4">Statut</th><th className="px-5 py-4">Tâches</th><th className="px-5 py-4">Documents uniques</th><th className="px-5 py-4 text-right">Actions</th>
               </tr></thead>
               <tbody>
-                {filtered.map((activity) => (
+                {filtered.map((activity) => {
+                  const issues = prerequisiteIssues[activity.id] ?? [];
+                  const hasTasks = (taskCounts[activity.id] ?? 0) > 0;
+                  const compliant = hasTasks && issues.length === 0;
+                  return (
                   <tr
                     key={activity.id}
                     role="button"
@@ -251,15 +327,48 @@ export function ActivitiesWorkspace() {
                         setSelectedActivity(activity);
                       }
                     }}
-                    className="cursor-pointer border-b border-slate-100 text-sm outline-none transition hover:bg-blue-50/50 focus-visible:bg-blue-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--opc-blue)]"
+                    className={`cursor-pointer border-b border-slate-100 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--opc-blue)] ${
+                      issues.length
+                        ? "bg-red-50/80 hover:bg-red-100/70"
+                        : compliant
+                          ? "bg-emerald-50/70 hover:bg-emerald-100/60"
+                          : "hover:bg-blue-50/50 focus-visible:bg-blue-50"
+                    }`}
                     aria-label={`Voir le contenu de l’activité ${activity.code}`}
                   >
                     <td className="px-5 py-4 font-black text-[var(--opc-blue)]">{activity.code}</td>
                     <td className="px-5 py-4"><div className="flex items-center gap-2">{activity.critical ? <AlertTriangle className="h-4 w-4 text-[var(--opc-red)]" /> : <CheckCircle2 className="h-4 w-4 text-slate-300" />}<span className="font-bold">{activity.name}</span></div></td>
                     <td className="px-5 py-4">{zoneName(activity) || "—"}</td>
                     <td className="px-5 py-4">
-                      <div className="font-bold">{collaboratorName(activity.alstom_supervisor_id) || activity.responsible || "—"}</div>
-                      <div className="mt-1 text-xs text-slate-500">Avanzit : {collaboratorName(activity.avanzit_site_manager_id) || "À affecter"}</div>
+                      <div className="space-y-1">
+                        {(taskOwners[activity.id] ?? []).map((owner) => (
+                          <p key={`${owner.company}-${owner.name}`} className="text-xs">
+                            <strong>{owner.name}</strong>{" "}
+                            <span className="text-slate-500">
+                              ({owner.company}, {owner.count} tâche
+                              {owner.count > 1 ? "s" : ""})
+                            </span>
+                          </p>
+                        ))}
+                        {!taskOwners[activity.id]?.length ? (
+                          <span className="text-xs text-slate-400">
+                            Aucun responsable affecté aux tâches
+                          </span>
+                        ) : null}
+                      </div>
+                      {issues.length ? (
+                        <div className="mt-2 rounded-lg bg-red-100 p-2 text-[10px] font-bold text-red-700">
+                          {issues.map((issue) => (
+                            <p key={`${issue.task}-${issue.details}`}>
+                              {issue.task} : {issue.details}
+                            </p>
+                          ))}
+                        </div>
+                      ) : compliant ? (
+                        <p className="mt-2 text-[10px] font-black text-emerald-700">
+                          Tous les prérequis sont conformes
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-5 py-4 text-xs text-slate-500"><div className="flex items-center gap-2"><CalendarDays className="h-4 w-4" />{activity.start_date || "—"} → {activity.finish_date || "—"}</div></td>
                     <td className="px-5 py-4"><div className="flex items-center gap-3"><div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-[var(--opc-blue)]" style={{ width: `${activity.progress}%` }} /></div><span className="text-xs font-black">{activity.progress}%</span></div></td>
@@ -268,7 +377,8 @@ export function ActivitiesWorkspace() {
                     <td className="px-5 py-4"><span className="inline-flex min-w-10 items-center justify-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-black text-violet-700"><FileText className="h-3.5 w-3.5" />{documentCounts[activity.id] ?? 0}</span></td>
                     <td className="px-5 py-4"><div className="flex justify-end gap-2"><button type="button" onClick={(event) => { event.stopPropagation(); openEdit(activity); }} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--opc-border)] text-slate-600"><Edit3 className="h-4 w-4" /></button><button type="button" onClick={(event) => { event.stopPropagation(); setActivityToDelete(activity); }} className="grid h-9 w-9 place-items-center rounded-lg border border-red-200 text-[var(--opc-red)]"><Trash2 className="h-4 w-4" /></button></div></td>
                   </tr>
-                ))}
+                  );
+                })}
                 {filtered.length === 0 ? <tr><td colSpan={10} className="px-5 py-16 text-center text-sm text-slate-400">Aucune activité trouvée.</td></tr> : null}
               </tbody>
             </table>
@@ -310,18 +420,6 @@ export function ActivitiesWorkspace() {
                   <select value={form.zone_element_id} onChange={(e) => setForm({ ...form, zone_element_id: e.target.value })} className="input" disabled={!form.zone_id}>
                     <option value="">Tout l’axe</option>
                     {zoneElements.filter((element) => element.zone_id === form.zone_id).map((element) => <option key={element.id} value={element.id}>{element.element_type === "bal" ? "BAL — " : ""}{element.name}</option>)}
-                  </select>
-                </Field>
-                <Field label="Superviseur Alstom">
-                  <select value={form.alstom_supervisor_id} onChange={(e) => setForm({ ...form, alstom_supervisor_id: e.target.value })} className="input">
-                    <option value="">À affecter</option>
-                    {alstomCollaborators.map((person) => <option key={person.id} value={person.id}>{person.full_name} — {person.role}</option>)}
-                  </select>
-                </Field>
-                <Field label="Chef de chantier Avanzit">
-                  <select value={form.avanzit_site_manager_id} onChange={(e) => setForm({ ...form, avanzit_site_manager_id: e.target.value })} className="input">
-                    <option value="">{avanzitCollaborators.length ? "À affecter" : "À compléter dans Organisation"}</option>
-                    {avanzitCollaborators.map((person) => <option key={person.id} value={person.id}>{person.full_name} — {person.role}</option>)}
                   </select>
                 </Field>
                 <Field label="Date de début"><input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className="input" /></Field>

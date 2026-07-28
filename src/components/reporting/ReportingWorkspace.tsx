@@ -56,6 +56,37 @@ type ProgressUpdate = {
   comment: string | null;
   photos: ProgressPhoto[];
 };
+type ResourceDetails = {
+  name: string;
+  asset_type: "tool" | "machine";
+  condition: string;
+  calibration_required: boolean;
+  next_calibration_date: string | null;
+  technical_sheet_reference: string | null;
+  technical_sheet_valid_until: string | null;
+  inspection_valid_until: string | null;
+  operator_authorization_required: boolean;
+};
+type TaskResource = {
+  task_id: string;
+  quality_tools: ResourceDetails | ResourceDetails[] | null;
+};
+type TaskEquipmentResource = {
+  task_id: string;
+  usage_status: string;
+  project_equipment:
+    | { name: string; equipment_type: string; status: string }
+    | Array<{ name: string; equipment_type: string; status: string }>
+    | null;
+};
+type TaskPrerequisiteStatus = {
+  task_id: string;
+  total_requirements: number;
+  missing_certifications: number;
+  missing_documents: number;
+  invalid_tools: number;
+  missing_manual_items: number;
+};
 
 const reportLabels: Record<ReportType, string> = {
   daily: "Rapport journalier",
@@ -110,6 +141,10 @@ export function ReportingWorkspace() {
   const [zones, setZones] = useState<ZoneOption[]>([]);
   const [zoneElements, setZoneElements] = useState<ZoneElementOption[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [taskResources, setTaskResources] = useState<TaskResource[]>([]);
+  const [taskEquipment, setTaskEquipment] = useState<TaskEquipmentResource[]>([]);
+  const [taskPrerequisites, setTaskPrerequisites] =
+    useState<TaskPrerequisiteStatus[]>([]);
   const [type, setType] = useState<ReportType>("daily");
   const today = isoDate(new Date());
   const [periodStart, setPeriodStart] = useState(today);
@@ -185,6 +220,43 @@ export function ReportingWorkspace() {
       setCollaborators((peopleResult.data ?? []) as CollaboratorOption[]);
       setZones((zonesResult.data ?? []) as ZoneOption[]);
       setZoneElements((elementsResult.data ?? []) as ZoneElementOption[]);
+      const taskIds = (taskResult.data ?? []).map((task) => task.id);
+      if (taskIds.length) {
+        const [resourcesResult, equipmentLinkResult, prerequisiteResult] =
+          await Promise.all([
+            supabase
+              .from("task_tools")
+              .select(
+                "task_id,quality_tools(name,asset_type,condition,calibration_required,next_calibration_date,technical_sheet_reference,technical_sheet_valid_until,inspection_valid_until,operator_authorization_required)",
+              )
+              .in("task_id", taskIds),
+            supabase
+              .from("task_equipment")
+              .select(
+                "task_id,usage_status,project_equipment(name,equipment_type,status)",
+              )
+              .in("task_id", taskIds),
+            supabase
+              .from("task_prerequisite_status")
+              .select(
+                "task_id,total_requirements,missing_certifications,missing_documents,invalid_tools,missing_manual_items",
+              )
+              .in("task_id", taskIds),
+          ]);
+        if (!resourcesResult.error) {
+          setTaskResources((resourcesResult.data ?? []) as TaskResource[]);
+        }
+        if (!equipmentLinkResult.error) {
+          setTaskEquipment(
+            (equipmentLinkResult.data ?? []) as TaskEquipmentResource[],
+          );
+        }
+        if (!prerequisiteResult.error) {
+          setTaskPrerequisites(
+            (prerequisiteResult.data ?? []) as TaskPrerequisiteStatus[],
+          );
+        }
+      }
       const paths = loadedUpdates.flatMap((update) =>
         (update.photos ?? []).map((photo) => photo.file_path),
       );
@@ -336,6 +408,15 @@ export function ReportingWorkspace() {
             const taskUpdates = reportUpdates.filter(
               (update) => update.task_id === task.id,
             );
+            const prerequisite = taskPrerequisites.find(
+              (item) => item.task_id === task.id,
+            );
+            const missingPrerequisites = prerequisite
+              ? Number(prerequisite.missing_certifications) +
+                Number(prerequisite.missing_documents) +
+                Number(prerequisite.invalid_tools) +
+                Number(prerequisite.missing_manual_items)
+              : 0;
             return {
               title: task.title,
               alstom: collaboratorName(task.alstom_supervisor_id),
@@ -355,6 +436,30 @@ export function ReportingWorkspace() {
                   )
                   .filter(Boolean)
                   .join(" · ") || "Aucune mise à jour saisie sur la période",
+              prerequisiteStatus:
+                prerequisite?.total_requirements && missingPrerequisites === 0
+                  ? "Conforme"
+                  : prerequisite?.total_requirements
+                    ? "Non conforme"
+                    : "À configurer",
+              prerequisiteDetails: prerequisite
+                ? [
+                    prerequisite.missing_certifications
+                      ? `${prerequisite.missing_certifications} habilitation(s)`
+                      : "",
+                    prerequisite.missing_documents
+                      ? `${prerequisite.missing_documents} document(s)`
+                      : "",
+                    prerequisite.invalid_tools
+                      ? `${prerequisite.invalid_tools} outil(s)/engin(s)`
+                      : "",
+                    prerequisite.missing_manual_items
+                      ? `${prerequisite.missing_manual_items} contrôle(s)`
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(", ") || "Tous les contrôles sont satisfaits"
+                : "Aucun prérequis configuré",
             };
           }),
       })),
@@ -384,6 +489,81 @@ export function ReportingWorkspace() {
             photo.update.work_done ||
             "Photo d’avancement",
         })),
+      resources: {
+        tools: [
+          ...new Set(
+            taskResources
+              .filter(
+                (link) =>
+                  relevantTaskIds.has(link.task_id) &&
+                  (Array.isArray(link.quality_tools)
+                    ? link.quality_tools[0]?.asset_type
+                    : link.quality_tools?.asset_type) === "tool",
+              )
+              .map((link) =>
+                Array.isArray(link.quality_tools)
+                  ? link.quality_tools[0]
+                  : link.quality_tools,
+              )
+              .filter(Boolean)
+              .map((tool) => {
+                const calibration = tool?.calibration_required
+                  ? `étalonnage ${tool.next_calibration_date ?? "non renseigné"}`
+                  : "étalonnage RAS";
+                return `${tool?.name} (${tool?.condition}, ${calibration})`;
+              }),
+          ),
+        ],
+        machines: [
+          ...new Set(
+            taskResources
+              .filter(
+                (link) =>
+                  relevantTaskIds.has(link.task_id) &&
+                  (Array.isArray(link.quality_tools)
+                    ? link.quality_tools[0]?.asset_type
+                    : link.quality_tools?.asset_type) === "machine",
+              )
+              .map((link) =>
+                Array.isArray(link.quality_tools)
+                  ? link.quality_tools[0]
+                  : link.quality_tools,
+              )
+              .filter(Boolean)
+              .map((machine) => {
+                const sheet = machine?.technical_sheet_reference
+                  ? `fiche ${machine.technical_sheet_reference}${
+                      machine.technical_sheet_valid_until
+                        ? ` valide jusqu’au ${machine.technical_sheet_valid_until}`
+                        : ""
+                    }`
+                  : "fiche technique manquante";
+                const inspection = machine?.inspection_valid_until
+                  ? `inspection valide jusqu’au ${machine.inspection_valid_until}`
+                  : "inspection RAS";
+                const authorization = machine?.operator_authorization_required
+                  ? "habilitation opérateur requise"
+                  : "habilitation RAS";
+                return `${machine?.name} (${machine?.condition}, ${sheet}, ${inspection}, ${authorization})`;
+              }),
+          ),
+        ],
+        equipment: [
+          ...new Set(
+            taskEquipment
+              .filter((link) => relevantTaskIds.has(link.task_id))
+              .map((link) => {
+                const item = Array.isArray(link.project_equipment)
+                  ? link.project_equipment[0]
+                  : link.project_equipment;
+                return item
+                  ? `${item.name} (${link.usage_status}, ${item.status})`
+                  : "";
+              })
+              .filter(Boolean),
+          ),
+        ],
+      },
     };
   }
 
@@ -659,6 +839,7 @@ export function ReportingWorkspace() {
                               <th className="p-3">Tâche</th>
                               <th className="p-3">Responsables</th>
                               <th className="p-3">Statut</th>
+                              <th className="p-3">Prérequis</th>
                               <th className="p-3">État actuel</th>
                               <th className="p-3">Gain période</th>
                               <th className="p-3">Part de l’activité</th>
@@ -669,6 +850,15 @@ export function ReportingWorkspace() {
                             {activityTasks.map((task) => {
                               const taskUpdates = activityUpdates.filter((update) => update.task_id === task.id);
                               const analysis = taskProgressAnalysis(task);
+                              const prerequisite = taskPrerequisites.find(
+                                (item) => item.task_id === task.id,
+                              );
+                              const prerequisiteMissing = prerequisite
+                                ? Number(prerequisite.missing_certifications) +
+                                  Number(prerequisite.missing_documents) +
+                                  Number(prerequisite.invalid_tools) +
+                                  Number(prerequisite.missing_manual_items)
+                                : 0;
                               return (
                                 <tr key={task.id} className="border-t border-slate-100 align-top">
                                   <td className="p-3 font-bold">{task.title}</td>
@@ -677,6 +867,22 @@ export function ReportingWorkspace() {
                                     V: {collaboratorName(task.avanzit_site_manager_id)}
                                   </td>
                                   <td className="p-3">{task.status}</td>
+                                  <td className="p-3">
+                                    <span
+                                      className={`rounded-full px-2 py-1 text-[10px] font-black ${
+                                        prerequisite?.total_requirements &&
+                                        prerequisiteMissing === 0
+                                          ? "bg-emerald-50 text-emerald-700"
+                                          : "bg-red-50 text-red-700"
+                                      }`}
+                                    >
+                                      {prerequisite?.total_requirements
+                                        ? prerequisiteMissing
+                                          ? `${prerequisiteMissing} anomalie(s)`
+                                          : "Conforme"
+                                        : "À configurer"}
+                                    </span>
+                                  </td>
                                   <td className="p-3">
                                     <div className="font-black text-[var(--opc-blue)]">{analysis.current}%</div>
                                     <div className="mt-1 h-1.5 w-24 overflow-hidden rounded-full bg-slate-100">
@@ -724,18 +930,38 @@ export function ReportingWorkspace() {
 
             <section className="mt-8">
               <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">
-                4. Production, contraintes et prévisions
+                4. Ressources mobilisées
+              </h3>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <ReportList
+                  title="Outillages"
+                  values={buildExportData().resources.tools}
+                />
+                <ReportList
+                  title="Engins"
+                  values={buildExportData().resources.machines}
+                />
+                <ReportList
+                  title="Équipements / matériaux"
+                  values={buildExportData().resources.equipment}
+                />
+              </div>
+            </section>
+
+            <section className="mt-8">
+              <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">
+                5. Production, contraintes et prévisions
               </h3>
               <div className="mt-4 grid gap-5 md:grid-cols-2">
-                <ReportList title="4.1 Travaux réalisés" values={reportUpdates.map((update) => update.work_done).filter(Boolean) as string[]} />
-                <ReportList title="4.2 Travaux en cours" values={reportUpdates.map((update) => update.ongoing_work).filter(Boolean) as string[]} />
-                <ReportList title="4.3 Blocages / risques / alertes" values={reportUpdates.map((update) => update.blockers).filter(Boolean) as string[]} red />
-                <ReportList title="4.4 Prochaines étapes" values={reportUpdates.map((update) => update.next_steps).filter(Boolean) as string[]} />
+                <ReportList title="5.1 Travaux réalisés" values={reportUpdates.map((update) => update.work_done).filter(Boolean) as string[]} />
+                <ReportList title="5.2 Travaux en cours" values={reportUpdates.map((update) => update.ongoing_work).filter(Boolean) as string[]} />
+                <ReportList title="5.3 Blocages / risques / alertes" values={reportUpdates.map((update) => update.blockers).filter(Boolean) as string[]} red />
+                <ReportList title="5.4 Prochaines étapes" values={reportUpdates.map((update) => update.next_steps).filter(Boolean) as string[]} />
               </div>
             </section>
 
             <section className="mt-8 break-before-page">
-                <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">5. Planches photographiques</h3>
+                <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">6. Planches photographiques</h3>
                 <div className="mt-4 space-y-6">
                   {reportActivities.map((activity) => {
                     const activityTaskIds = new Set(

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   BadgeCheck,
   Building2,
+  CalendarClock,
   CirclePlus,
   Edit3,
   Loader2,
@@ -11,12 +12,15 @@ import {
   Network,
   Phone,
   Search,
+  ShieldCheck,
+  Trash2,
   UserRound,
   UsersRound,
   X,
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
+import { ConfirmDeleteDialog } from "@/components/ui/ConfirmDeleteDialog";
 
 type Company = "ALSTOM" | "AVANZIT";
 
@@ -47,6 +51,29 @@ type CollaboratorForm = {
   active: boolean;
 };
 
+type Certification = {
+  id: string;
+  collaborator_id: string;
+  certification_code: string;
+  certification_name: string;
+  issuer: string | null;
+  issued_at: string | null;
+  valid_until: string | null;
+  document_reference: string | null;
+  notes: string | null;
+};
+
+const emptyCertification = {
+  certification_code: "",
+  certification_name: "",
+  issuer: "",
+  issued_at: "",
+  valid_until: "",
+  document_reference: "",
+  notes: "",
+};
+const todayIso = new Date().toISOString().slice(0, 10);
+
 const emptyForm: CollaboratorForm = {
   employee_code: "",
   full_name: "",
@@ -62,6 +89,7 @@ const emptyForm: CollaboratorForm = {
 export function OrganizationWorkspace() {
   const supabase = useMemo(() => createClient(), []);
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [certifications, setCertifications] = useState<Certification[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [view, setView] = useState<"chart" | "directory">("chart");
   const [company, setCompany] = useState<Company>("ALSTOM");
@@ -72,6 +100,12 @@ export function OrganizationWorkspace() {
   const [editing, setEditing] = useState<Collaborator | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<CollaboratorForm>(emptyForm);
+  const [selectedPerson, setSelectedPerson] = useState<Collaborator | null>(null);
+  const [certificationForm, setCertificationForm] =
+    useState(emptyCertification);
+  const [certificationSaving, setCertificationSaving] = useState(false);
+  const [certificationToDelete, setCertificationToDelete] =
+    useState<Certification | null>(null);
 
   async function loadCollaborators() {
     setLoading(true);
@@ -90,19 +124,33 @@ export function OrganizationWorkspace() {
     }
 
     setProjectId(project.data.id);
-    const result = await supabase
-      .from("collaborators")
-      .select("*")
-      .eq("project_id", project.data.id)
-      .order("sort_order")
-      .order("full_name");
+    const [result, certificationResult] = await Promise.all([
+      supabase
+        .from("collaborators")
+        .select("*")
+        .eq("project_id", project.data.id)
+        .order("sort_order")
+        .order("full_name"),
+      supabase
+        .from("collaborator_certifications")
+        .select(
+          "id,collaborator_id,certification_code,certification_name,issuer,issued_at,valid_until,document_reference,notes",
+        )
+        .eq("project_id", project.data.id)
+        .order("valid_until"),
+    ]);
 
-    if (result.error) {
+    if (result.error || certificationResult.error) {
       setError(
-        `Le référentiel Organization n’est pas disponible : ${result.error.message}`,
+        `Le référentiel Organization n’est pas disponible : ${
+          result.error?.message ?? certificationResult.error?.message
+        }`,
       );
     } else {
       setCollaborators((result.data ?? []) as Collaborator[]);
+      setCertifications(
+        (certificationResult.data ?? []) as Certification[],
+      );
     }
     setLoading(false);
   }
@@ -195,6 +243,55 @@ export function OrganizationWorkspace() {
       await loadCollaborators();
     }
     setSaving(false);
+  }
+
+  async function saveCertification(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (
+      !projectId ||
+      !selectedPerson ||
+      !certificationForm.certification_code.trim() ||
+      !certificationForm.certification_name.trim()
+    ) {
+      return;
+    }
+    setCertificationSaving(true);
+    setError("");
+    const result = await supabase.from("collaborator_certifications").upsert(
+      {
+        project_id: projectId,
+        collaborator_id: selectedPerson.id,
+        certification_code: certificationForm.certification_code.trim(),
+        certification_name: certificationForm.certification_name.trim(),
+        issuer: certificationForm.issuer.trim() || null,
+        issued_at: certificationForm.issued_at || null,
+        valid_until: certificationForm.valid_until || null,
+        document_reference:
+          certificationForm.document_reference.trim() || null,
+        notes: certificationForm.notes.trim() || null,
+      },
+      { onConflict: "collaborator_id,certification_code" },
+    );
+    if (result.error) {
+      setError(result.error.message);
+    } else {
+      setCertificationForm(emptyCertification);
+      await loadCollaborators();
+    }
+    setCertificationSaving(false);
+  }
+
+  async function deleteCertification() {
+    if (!certificationToDelete) return;
+    const result = await supabase
+      .from("collaborator_certifications")
+      .delete()
+      .eq("id", certificationToDelete.id);
+    if (result.error) setError(result.error.message);
+    else {
+      setCertificationToDelete(null);
+      await loadCollaborators();
+    }
   }
 
   return (
@@ -295,7 +392,7 @@ export function OrganizationWorkspace() {
                     collaborator={root}
                     all={companyCollaborators}
                     level={0}
-                    onEdit={openEdit}
+                    onEdit={setSelectedPerson}
                   />
                 ))}
               </div>
@@ -325,7 +422,8 @@ export function OrganizationWorkspace() {
                 {visibleCollaborators.map((collaborator) => (
                   <tr
                     key={collaborator.id}
-                    className="border-t border-slate-100 hover:bg-blue-50/30"
+                    onClick={() => setSelectedPerson(collaborator)}
+                    className="cursor-pointer border-t border-slate-100 hover:bg-blue-50/30"
                   >
                     <td className="px-5 py-4 font-black text-[var(--opc-blue)]">
                       {collaborator.employee_code}
@@ -352,7 +450,10 @@ export function OrganizationWorkspace() {
                     <td className="px-5 py-4 text-right">
                       <button
                         type="button"
-                        onClick={() => openEdit(collaborator)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEdit(collaborator);
+                        }}
                         className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--opc-border)] text-slate-600"
                         aria-label={`Modifier ${collaborator.full_name}`}
                       >
@@ -366,6 +467,259 @@ export function OrganizationWorkspace() {
           </div>
         ) : null}
       </section>
+
+      {selectedPerson ? (
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/45 p-4">
+          <section className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
+            <header className="flex items-start justify-between gap-4 border-b border-[var(--opc-border)] p-6">
+              <div className="flex items-start gap-4">
+                <div className="grid h-14 w-14 place-items-center rounded-2xl bg-blue-50 text-[var(--opc-blue)]">
+                  <UserRound className="h-7 w-7" />
+                </div>
+                <div>
+                  <p className="text-xs font-black uppercase text-[var(--opc-red)]">
+                    {selectedPerson.employee_code} - {selectedPerson.company}
+                  </p>
+                  <h2 className="mt-1 text-2xl font-black">
+                    {selectedPerson.full_name}
+                  </h2>
+                  <p className="mt-1 font-bold text-[var(--opc-blue)]">
+                    {selectedPerson.role}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    openEdit(selectedPerson);
+                    setSelectedPerson(null);
+                  }}
+                  className="flex items-center gap-2 rounded-xl border border-[var(--opc-border)] px-4 py-2 text-sm font-bold"
+                >
+                  <Edit3 className="h-4 w-4" /> Modifier le profil
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedPerson(null)}
+                  className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--opc-border)]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </header>
+
+            <div className="grid gap-6 p-6 lg:grid-cols-[1fr_1.2fr]">
+              <div>
+                <h3 className="text-sm font-black uppercase text-slate-500">
+                  Informations personnelles
+                </h3>
+                <div className="mt-3 space-y-3 rounded-2xl bg-slate-50 p-4 text-sm">
+                  <p><strong>Profil :</strong> {selectedPerson.profile ?? "—"}</p>
+                  <p><strong>Téléphone :</strong> {selectedPerson.phone ?? "—"}</p>
+                  <p><strong>Email :</strong> {selectedPerson.email ?? "—"}</p>
+                  <p>
+                    <strong>Responsable :</strong>{" "}
+                    {collaborators.find(
+                      (person) => person.id === selectedPerson.parent_id,
+                    )?.full_name ?? "—"}
+                  </p>
+                </div>
+
+                <h3 className="mt-6 text-sm font-black uppercase text-slate-500">
+                  Ajouter une habilitation
+                </h3>
+                <form
+                  onSubmit={saveCertification}
+                  className="mt-3 grid gap-3 rounded-2xl border border-[var(--opc-border)] p-4 sm:grid-cols-2"
+                >
+                  <input
+                    required
+                    placeholder="Code (ex. ELEC-B1)"
+                    value={certificationForm.certification_code}
+                    onChange={(event) =>
+                      setCertificationForm({
+                        ...certificationForm,
+                        certification_code: event.target.value,
+                      })
+                    }
+                    className="input"
+                  />
+                  <input
+                    required
+                    placeholder="Nom de l’habilitation"
+                    value={certificationForm.certification_name}
+                    onChange={(event) =>
+                      setCertificationForm({
+                        ...certificationForm,
+                        certification_name: event.target.value,
+                      })
+                    }
+                    className="input"
+                  />
+                  <input
+                    placeholder="Organisme émetteur"
+                    value={certificationForm.issuer}
+                    onChange={(event) =>
+                      setCertificationForm({
+                        ...certificationForm,
+                        issuer: event.target.value,
+                      })
+                    }
+                    className="input"
+                  />
+                  <input
+                    placeholder="Référence"
+                    value={certificationForm.document_reference}
+                    onChange={(event) =>
+                      setCertificationForm({
+                        ...certificationForm,
+                        document_reference: event.target.value,
+                      })
+                    }
+                    className="input"
+                  />
+                  <Field label="Date d’obtention">
+                    <input
+                      type="date"
+                      value={certificationForm.issued_at}
+                      onChange={(event) =>
+                        setCertificationForm({
+                          ...certificationForm,
+                          issued_at: event.target.value,
+                        })
+                      }
+                      className="input"
+                    />
+                  </Field>
+                  <Field label="Valide jusqu’au">
+                    <input
+                      type="date"
+                      value={certificationForm.valid_until}
+                      onChange={(event) =>
+                        setCertificationForm({
+                          ...certificationForm,
+                          valid_until: event.target.value,
+                        })
+                      }
+                      className="input"
+                    />
+                  </Field>
+                  <button
+                    disabled={certificationSaving}
+                    className="rounded-xl bg-[var(--opc-blue)] px-4 py-3 text-sm font-black text-white sm:col-span-2"
+                  >
+                    {certificationSaving
+                      ? "Enregistrement..."
+                      : "Ajouter à la matrice"}
+                  </button>
+                </form>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black uppercase text-slate-500">
+                    Matrice des habilitations
+                  </h3>
+                  <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-[var(--opc-blue)]">
+                    {
+                      certifications.filter(
+                        (item) => item.collaborator_id === selectedPerson.id,
+                      ).length
+                    }{" "}
+                    habilitation(s)
+                  </span>
+                </div>
+                <div className="mt-3 space-y-3">
+                  {certifications
+                    .filter(
+                      (item) => item.collaborator_id === selectedPerson.id,
+                    )
+                    .map((certification) => {
+                      const expired = Boolean(
+                          certification.valid_until &&
+                          certification.valid_until <
+                            todayIso,
+                      );
+                      return (
+                        <article
+                          key={certification.id}
+                          className={`rounded-2xl border p-4 ${
+                            expired
+                              ? "border-red-200 bg-red-50"
+                              : "border-emerald-200 bg-emerald-50"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-black uppercase text-slate-500">
+                                {certification.certification_code}
+                              </p>
+                              <h4 className="mt-1 font-black">
+                                {certification.certification_name}
+                              </h4>
+                            </div>
+                            <span
+                              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-black ${
+                                expired
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {expired ? (
+                                <CalendarClock className="h-3.5 w-3.5" />
+                              ) : (
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                              )}
+                              {expired ? "Expirée" : "Valide"}
+                            </span>
+                          </div>
+                          <p className="mt-3 text-xs text-slate-600">
+                            {certification.issuer || "Organisme non renseigné"} ·{" "}
+                            {certification.valid_until
+                              ? `Valide jusqu’au ${certification.valid_until}`
+                              : "Sans date d’expiration"}
+                          </p>
+                          <div className="mt-3 flex items-center justify-between text-xs">
+                            <span>{certification.document_reference || "Sans référence"}</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCertificationToDelete(certification)
+                              }
+                              className="grid h-8 w-8 place-items-center rounded-lg text-red-600 hover:bg-red-100"
+                              aria-label="Supprimer l’habilitation"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  {!certifications.some(
+                    (item) => item.collaborator_id === selectedPerson.id,
+                  ) ? (
+                    <div className="rounded-2xl border border-dashed border-[var(--opc-border)] p-8 text-center text-sm text-slate-400">
+                      Aucune habilitation enregistrée.
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      <ConfirmDeleteDialog
+        open={Boolean(certificationToDelete)}
+        title="Supprimer cette habilitation ?"
+        description="L’habilitation ne sera plus prise en compte dans le contrôle des prérequis."
+        subject={certificationToDelete?.certification_name}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setCertificationToDelete(null);
+        }}
+        onConfirm={deleteCertification}
+      />
 
       {formOpen ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40">

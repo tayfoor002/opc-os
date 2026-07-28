@@ -30,6 +30,7 @@ import {
   getTaskProgressPhotoUrls,
 } from "@/app/tasks/actions";
 import { ConfirmDeleteDialog } from "@/components/ui/ConfirmDeleteDialog";
+import { TaskPrerequisitesPanel } from "@/components/tasks/TaskPrerequisitesPanel";
 import { createClient } from "@/lib/supabase/client";
 import type { Activity } from "@/types/activity";
 import type {
@@ -144,7 +145,6 @@ export function TasksWorkspace() {
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewError, setPreviewError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [responsibilityWarning, setResponsibilityWarning] = useState(false);
   const [progressUpdates, setProgressUpdates] = useState<TaskProgressUpdate[]>([]);
   const [progressPhotoUrls, setProgressPhotoUrls] = useState<Record<string, string>>({});
   const [progressSaving, setProgressSaving] = useState(false);
@@ -439,7 +439,6 @@ export function TasksWorkspace() {
     setEditing(null);
     setForm(emptyForm);
     setDocumentQuery("");
-    setResponsibilityWarning(false);
     setProgressUpdates([]);
   }
 
@@ -477,20 +476,6 @@ export function TasksWorkspace() {
   async function saveTask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!projectId || !form.title.trim()) return;
-
-    const parentActivity = activities.find(
-      (activity) => activity.id === form.activity_id,
-    );
-    const supervisorsDiffer =
-      parentActivity &&
-      ((parentActivity.alstom_supervisor_id ?? "") !==
-        form.alstom_supervisor_id ||
-        (parentActivity.avanzit_site_manager_id ?? "") !==
-          form.avanzit_site_manager_id);
-    if (supervisorsDiffer) {
-      setResponsibilityWarning(true);
-      return;
-    }
     await persistTask();
   }
 
@@ -499,7 +484,6 @@ export function TasksWorkspace() {
 
     setSaving(true);
     setError("");
-    setResponsibilityWarning(false);
 
     const alstomSupervisor = collaborators.find(
       (person) => person.id === form.alstom_supervisor_id,
@@ -892,8 +876,6 @@ export function TasksWorkspace() {
                         zone_id: activity?.zone_id ?? form.zone_id,
                         phase_id: activity?.phase_id ?? form.phase_id,
                         zone_element_id: activity?.zone_element_id ?? form.zone_element_id,
-                        alstom_supervisor_id: activity?.alstom_supervisor_id ?? form.alstom_supervisor_id,
-                        avanzit_site_manager_id: activity?.avanzit_site_manager_id ?? form.avanzit_site_manager_id,
                       });
                     }}
                     className="input"
@@ -1091,6 +1073,15 @@ export function TasksWorkspace() {
               ) : null}
 
               <div className="mt-5">
+                {editing && projectId ? (
+                  <TaskPrerequisitesPanel
+                    taskId={editing.id}
+                    projectId={projectId}
+                  />
+                ) : null}
+              </div>
+
+              <div className="mt-5">
                 <Field label="Documents utilisés">
                   <div className="overflow-hidden rounded-xl border border-[var(--opc-border)]">
                     <div className="flex items-center gap-2 border-b border-[var(--opc-border)] bg-slate-50 px-3">
@@ -1194,40 +1185,6 @@ export function TasksWorkspace() {
               </div>
             </form>
           </aside>
-        </div>
-      ) : null}
-
-      {responsibilityWarning ? (
-        <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
-          <section className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-50 text-amber-600">
-              <AlertTriangle className="h-6 w-6" />
-            </div>
-            <h3 className="mt-4 text-xl font-black">Responsables différents</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              Les responsables choisis pour cette tâche ne sont pas les mêmes que ceux de l’activité associée. Voulez-vous continuer malgré cette différence ?
-            </p>
-            <div className="mt-5 rounded-xl bg-slate-50 p-4 text-xs text-slate-600">
-              <p><strong>Alstom tâche :</strong> {collaboratorName(form.alstom_supervisor_id || null) || "À affecter"}</p>
-              <p className="mt-1"><strong>Avanzit tâche :</strong> {collaboratorName(form.avanzit_site_manager_id || null) || "À affecter"}</p>
-            </div>
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setResponsibilityWarning(false)}
-                className="rounded-xl border border-[var(--opc-border)] px-4 py-3 text-sm font-black text-slate-700"
-              >
-                Non, choisir un autre
-              </button>
-              <button
-                type="button"
-                onClick={() => void persistTask()}
-                className="rounded-xl bg-amber-500 px-4 py-3 text-sm font-black text-white"
-              >
-                Oui, continuer
-              </button>
-            </div>
-          </section>
         </div>
       ) : null}
 

@@ -10,6 +10,8 @@ export type ExportTask = {
   activityContribution: number;
   periodContribution: number;
   workSummary: string;
+  prerequisiteStatus: string;
+  prerequisiteDetails: string;
 };
 
 export type ExportActivity = {
@@ -50,6 +52,11 @@ export type ReportExportData = {
   blockers: string[];
   nextSteps: string[];
   photos: ExportPhoto[];
+  resources: {
+    tools: string[];
+    machines: string[];
+    equipment: string[];
+  };
 };
 
 function slugDate() {
@@ -541,7 +548,9 @@ export async function downloadReportWord(
                 children: [
                   textCell(task.title, true),
                   textCell(`A: ${task.alstom}\nV: ${task.avanzit}`),
-                  textCell(task.status),
+                  textCell(
+                    `${task.status}\nPrérequis : ${task.prerequisiteStatus}\n${task.prerequisiteDetails}`,
+                  ),
                   textCell(
                     `${task.currentProgress}% | +${task.periodIncrease} pts`,
                   ),
@@ -558,17 +567,36 @@ export async function downloadReportWord(
   }
 
   children.push(
-    sectionTitle("3. TRAVAUX RÉALISÉS"),
+    sectionTitle("3. RESSOURCES MOBILISÉES"),
+    new Paragraph({
+      children: [new TextRun({ text: "Outillages", bold: true, color: navy })],
+    }),
+    ...bulletParagraphs(data.resources.tools),
+    new Paragraph({
+      children: [new TextRun({ text: "Engins", bold: true, color: navy })],
+    }),
+    ...bulletParagraphs(data.resources.machines),
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: "Équipements / matériaux",
+          bold: true,
+          color: navy,
+        }),
+      ],
+    }),
+    ...bulletParagraphs(data.resources.equipment),
+    sectionTitle("4. TRAVAUX RÉALISÉS"),
     ...bulletParagraphs(data.completedWork),
-    sectionTitle("4. TRAVAUX EN COURS"),
+    sectionTitle("5. TRAVAUX EN COURS"),
     ...bulletParagraphs(data.ongoingWork),
-    sectionTitle("5. BLOCAGES, RISQUES ET ALERTES"),
+    sectionTitle("6. BLOCAGES, RISQUES ET ALERTES"),
     ...bulletParagraphs(data.blockers),
-    sectionTitle("6. PROCHAINES ÉTAPES"),
+    sectionTitle("7. PROCHAINES ÉTAPES"),
     ...bulletParagraphs(data.nextSteps),
   );
 
-  children.push(sectionTitle("7. PLANCHES PHOTOGRAPHIQUES"));
+  children.push(sectionTitle("8. PLANCHES PHOTOGRAPHIQUES"));
   if (data.photos.length) {
     for (let index = 0; index < data.photos.length; index += 2) {
       const photoCells = await Promise.all(
@@ -643,7 +671,7 @@ export async function downloadReportWord(
   }
 
   children.push(
-    sectionTitle("8. VISA ET VALIDATION"),
+    sectionTitle("9. VISA ET VALIDATION"),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       borders: allBorders,

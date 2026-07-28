@@ -108,7 +108,6 @@ export function ActivityDetailsDrawer({
   const [tab, setTab] = useState<DrawerTab>("overview");
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState<ActivityStatus>("not_started");
-  const [responsible, setResponsible] = useState("");
   const [loadingLinkedData, setLoadingLinkedData] = useState(false);
   const [linkedError, setLinkedError] = useState("");
   const [tasks, setTasks] = useState<ActivityTask[]>([]);
@@ -130,7 +129,6 @@ export function ActivityDetailsDrawer({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset the drawer for the selected activity
     setProgress(Number(activity.progress));
     setStatus(activity.status);
-    setResponsible(activity.responsible ?? "");
     setTab("overview");
     setLinkedError("");
     void loadLinkedData(activity.id);
@@ -217,6 +215,23 @@ export function ActivityDetailsDrawer({
   const currentActivity = activity;
   const collaboratorName = (id: string | null) =>
     collaborators.find((person) => person.id === id)?.full_name;
+  const taskOwnerCounts = tasks.reduce<Map<string, number>>((counts, task) => {
+    for (const personId of [
+      task.alstom_supervisor_id,
+      task.avanzit_site_manager_id,
+    ]) {
+      if (!personId) continue;
+      counts.set(personId, (counts.get(personId) ?? 0) + 1);
+    }
+    return counts;
+  }, new Map());
+  const taskOwnerSummary =
+    [...taskOwnerCounts]
+      .map(([personId, count]) => {
+        const name = collaboratorName(personId) ?? "Responsable inconnu";
+        return `${name} (${count} tâche${count > 1 ? "s" : ""})`;
+      })
+      .join(", ") || "Aucun responsable affecté";
 
   const completedTasks = tasks.filter((item) => item.status === "done").length;
   const taskProgress = tasks.length ? Math.round((completedTasks / tasks.length) * 100) : 0;
@@ -254,11 +269,6 @@ export function ActivityDetailsDrawer({
       zone_id: currentActivity.zone_id,
       phase_id: currentActivity.phase_id,
       zone_element_id: currentActivity.zone_element_id,
-      alstom_supervisor_id: currentActivity.alstom_supervisor_id,
-      avanzit_site_manager_id: currentActivity.avanzit_site_manager_id,
-      owner:
-        collaboratorName(currentActivity.alstom_supervisor_id)
-        ?? currentActivity.responsible,
     });
     if (result.error) setLinkedError(result.error.message);
     else {
@@ -317,7 +327,7 @@ export function ActivityDetailsDrawer({
     });
     if (result.error) setLinkedError(result.error.message);
     else {
-      await onSave({ progress, status, responsible: responsible.trim() || null });
+      await onSave({ progress, status });
       setProgressNote("");
       await loadLinkedData(currentActivity.id);
     }
@@ -376,15 +386,14 @@ export function ActivityDetailsDrawer({
 
               <div className="grid grid-cols-2 gap-3">
                 <Detail icon={MapPin} label="Zone" value={activity.zone ?? "—"} />
-                <Detail icon={UserRound} label="Responsable" value={activity.responsible ?? "—"} />
+                <Detail
+                  icon={UserRound}
+                  label="Responsables des tâches"
+                  value={taskOwnerSummary}
+                />
                 <Detail icon={CalendarDays} label="Début" value={activity.start_date ?? "—"} />
                 <Detail icon={CalendarDays} label="Fin" value={activity.finish_date ?? "—"} />
               </div>
-
-              <section className="rounded-2xl border border-[var(--opc-border)] p-4">
-                <label className="text-sm font-black">Responsable</label>
-                <input value={responsible} onChange={(event) => setResponsible(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] px-3 py-2.5 text-sm outline-none focus:border-[var(--opc-blue)]" />
-              </section>
 
               <section className="rounded-2xl border border-[var(--opc-border)] p-4">
                 <div className="flex items-center justify-between"><label className="text-sm font-black">Avancement</label><span className="text-sm font-black text-[var(--opc-blue)]">{progress} %</span></div>
@@ -545,7 +554,7 @@ export function ActivityDetailsDrawer({
 
         <div className="grid grid-cols-2 gap-3 border-t border-[var(--opc-border)] p-5">
           <button type="button" onClick={onClose} className="rounded-xl border border-[var(--opc-border)] px-4 py-3 text-sm font-bold text-slate-600">Fermer</button>
-          <button type="button" disabled={saving} onClick={() => void onSave({ progress, status, responsible: responsible.trim() || null })} className="flex items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 py-3 text-sm font-bold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Enregistrement..." : "Enregistrer"}</button>
+          <button type="button" disabled={saving} onClick={() => void onSave({ progress, status })} className="flex items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 py-3 text-sm font-bold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Enregistrement..." : "Enregistrer"}</button>
         </div>
       </aside>
     </>

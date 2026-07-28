@@ -24,7 +24,6 @@ export type ActivityFormValues = {
   code: string;
   name: string;
   zone: string;
-  responsible: string;
   start_date: string;
   finish_date: string;
   progress: number;
@@ -33,6 +32,4 @@ export type ActivityFormValues = {
   zone_id: string;
   phase_id: string;
   zone_element_id: string;
-  alstom_supervisor_id: string;
-  avanzit_site_manager_id: string;
 };

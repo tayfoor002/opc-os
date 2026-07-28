@@ -284,7 +284,7 @@ export async function downloadReportPdf(
         task.workSummary || "-",
         contentWidth - 169,
       ) as string[];
-      const rowHeight = Math.max(19, summaryLines.length * 3.4 + 8);
+      const rowHeight = Math.max(23, summaryLines.length * 3.4 + 8);
       ensure(rowHeight + 3);
       pdf.setFillColor(248, 250, 252);
       pdf.setDrawColor(...border);
@@ -297,7 +297,13 @@ export async function downloadReportPdf(
       pdf.setTextColor(...slate);
       pdf.setFontSize(7);
       pdf.text(
-        [`État: ${task.status}`, `Alstom: ${task.alstom}`, `Avanzit: ${task.avanzit}`],
+        [
+          `État: ${task.status}`,
+          `Prérequis: ${task.prerequisiteStatus}`,
+          task.prerequisiteDetails,
+          `Alstom: ${task.alstom}`,
+          `Avanzit: ${task.avanzit}`,
+        ],
         margin + 62,
         y + 5,
       );
@@ -321,16 +327,27 @@ export async function downloadReportPdf(
     y += 2;
   }
 
-  section(3, "TRAVAUX RÉALISÉS");
+  section(3, "RESSOURCES MOBILISÉES");
+  wrapped("Outillages", margin, contentWidth, { bold: true, size: 9 });
+  bullets(data.resources.tools);
+  wrapped("Engins", margin, contentWidth, { bold: true, size: 9 });
+  bullets(data.resources.machines);
+  wrapped("Équipements / matériaux", margin, contentWidth, {
+    bold: true,
+    size: 9,
+  });
+  bullets(data.resources.equipment);
+
+  section(4, "TRAVAUX RÉALISÉS");
   bullets(data.completedWork);
-  section(4, "TRAVAUX EN COURS");
+  section(5, "TRAVAUX EN COURS");
   bullets(data.ongoingWork);
-  section(5, "BLOCAGES, RISQUES ET ALERTES");
+  section(6, "BLOCAGES, RISQUES ET ALERTES");
   bullets(data.blockers);
-  section(6, "PROCHAINES ÉTAPES");
+  section(7, "PROCHAINES ÉTAPES");
   bullets(data.nextSteps);
 
-  section(7, "PLANCHES PHOTOGRAPHIQUES");
+  section(8, "PLANCHES PHOTOGRAPHIQUES");
   if (!data.photos.length) {
     wrapped("Aucune photo d’avancement enregistrée pour cette période.", margin, contentWidth, {
       color: slate,
@@ -385,7 +402,7 @@ export async function downloadReportPdf(
     y += 72;
   }
 
-  section(8, "VISA ET VALIDATION");
+  section(9, "VISA ET VALIDATION");
   ensure(32);
   const signatureWidth = (contentWidth - 6) / 2;
   ["ALSTOM", "AVANZIT"].forEach((label, index) => {
