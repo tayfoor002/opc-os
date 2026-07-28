@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
+  Archive,
   ArrowDownAZ,
   CalendarClock,
   Camera,
@@ -28,6 +29,7 @@ import {
   createTaskProgressUpdate,
   deleteTaskProgressPhoto,
   getTaskProgressPhotoUrls,
+  updateTaskProgressUpdate,
 } from "@/app/tasks/actions";
 import { ConfirmDeleteDialog } from "@/components/ui/ConfirmDeleteDialog";
 import { TaskPrerequisitesPanel } from "@/components/tasks/TaskPrerequisitesPanel";
@@ -126,6 +128,7 @@ const priorityLabels: Record<TaskPriority, string> = {
 };
 
 type SortOption = "due_asc" | "due_desc" | "priority" | "title" | "created_desc";
+type ArchiveView = "active" | "archived" | "all";
 
 const priorityRank: Record<TaskPriority, number> = {
   low: 1,
@@ -160,6 +163,7 @@ export function TasksWorkspace() {
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [activityFilter, setActivityFilter] = useState(() => searchParams.get("activity") || "all");
   const [sortBy, setSortBy] = useState<SortOption>("due_asc");
+  const [archiveView, setArchiveView] = useState<ArchiveView>("active");
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
@@ -184,6 +188,9 @@ export function TasksWorkspace() {
   const [nextSteps, setNextSteps] = useState("");
   const [progressComment, setProgressComment] = useState("");
   const [progressPhotos, setProgressPhotos] = useState<File[]>([]);
+  const [editingProgressUpdateId, setEditingProgressUpdateId] = useState<
+    string | null
+  >(null);
   const [photoToDelete, setPhotoToDelete] = useState<TaskProgressPhoto | null>(
     null,
   );
@@ -415,7 +422,13 @@ export function TasksWorkspace() {
       const matchesPriority = priorityFilter === "all" || task.priority === priorityFilter;
       const matchesOwner = ownerFilter === "all" || task.owner === ownerFilter;
       const matchesActivity = activityFilter === "all" || task.activity_id === activityFilter;
-      return matchesQuery && matchesStatus && matchesPriority && matchesOwner && matchesActivity;
+      const archived =
+        task.status === "done" ||
+        Boolean(task.due_date && task.due_date < today);
+      const matchesArchive =
+        archiveView === "all" ||
+        (archiveView === "archived" ? archived : !archived);
+      return matchesQuery && matchesStatus && matchesPriority && matchesOwner && matchesActivity && matchesArchive;
     });
 
     return [...result].sort((a, b) => {
@@ -427,7 +440,7 @@ export function TasksWorkspace() {
       const bDate = b.due_date ?? "9999-12-31";
       return sortBy === "due_desc" ? bDate.localeCompare(aDate) : aDate.localeCompare(bDate);
     });
-  }, [tasks, query, statusFilter, priorityFilter, ownerFilter, activityFilter, sortBy]);
+  }, [tasks, query, statusFilter, priorityFilter, ownerFilter, activityFilter, sortBy, archiveView, today]);
 
   const stats = {
     total: tasks.length,
@@ -436,6 +449,11 @@ export function TasksWorkspace() {
     blocked: tasks.filter((task) => task.status === "blocked").length,
     overdue: tasks.filter((task) => task.due_date && task.due_date < today && task.status !== "done").length,
     done: tasks.filter((task) => task.status === "done").length,
+    archived: tasks.filter(
+      (task) =>
+        task.status === "done" ||
+        Boolean(task.due_date && task.due_date < today),
+    ).length,
   };
 
   function openCreate(activityId = "") {
@@ -500,6 +518,26 @@ export function TasksWorkspace() {
     setBlockers("");
     setNextSteps("");
     setProgressComment("");
+    setProgressPhotos([]);
+    setEditingProgressUpdateId(null);
+  }
+
+  function editProgressUpdate(update: TaskProgressUpdate) {
+    setEditingProgressUpdateId(update.id);
+    setProgressDate(update.update_date);
+    setProgressValue(Number(update.progress));
+    setProgressQuantity(
+      form.progress_mode === "quantity" && Number(form.target_quantity) > 0
+        ? Math.round(
+            (Number(form.target_quantity) * Number(update.progress)) / 100 * 100,
+          ) / 100
+        : Number(form.completed_quantity ?? 0),
+    );
+    setWorkDone(update.work_done ?? "");
+    setOngoingWork(update.ongoing_work ?? "");
+    setBlockers(update.blockers ?? "");
+    setNextSteps(update.next_steps ?? "");
+    setProgressComment(update.comment ?? "");
     setProgressPhotos([]);
   }
 
@@ -574,6 +612,7 @@ export function TasksWorkspace() {
     setOwnerFilter("all");
     setActivityFilter("all");
     setSortBy("due_asc");
+    setArchiveView("active");
   }
 
   async function saveTask(event: React.FormEvent<HTMLFormElement>) {
@@ -686,6 +725,9 @@ export function TasksWorkspace() {
           ? buildingProgress
           : progressValue;
     data.set("task_id", editing.id);
+    if (editingProgressUpdateId) {
+      data.set("update_id", editingProgressUpdateId);
+    }
     data.set("update_date", progressDate);
     data.set("progress", String(resolvedProgress));
     if (form.progress_mode === "quantity") {
@@ -697,7 +739,9 @@ export function TasksWorkspace() {
     data.set("next_steps", nextSteps);
     data.set("comment", progressComment);
     progressPhotos.forEach((photo) => data.append("photos", photo));
-    const result = await createTaskProgressUpdate(data);
+    const result = editingProgressUpdateId
+      ? await updateTaskProgressUpdate(data)
+      : await createTaskProgressUpdate(data);
     if (!result.success) {
       setError(result.error);
     } else {
@@ -794,6 +838,46 @@ export function TasksWorkspace() {
 
       <section className="mt-6 overflow-hidden rounded-2xl border border-[var(--opc-border)] bg-white shadow-sm">
         <div className="border-b border-[var(--opc-border)] p-4">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setArchiveView("active")}
+              className={`rounded-xl px-4 py-2 text-sm font-black transition ${
+                archiveView === "active"
+                  ? "bg-[var(--opc-blue)] text-white"
+                  : "border border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              Tâches actives ({stats.total - stats.archived})
+            </button>
+            <button
+              type="button"
+              onClick={() => setArchiveView("archived")}
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-black transition ${
+                archiveView === "archived"
+                  ? "bg-slate-800 text-white"
+                  : "border border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <Archive className="h-4 w-4" />
+              Archives ({stats.archived})
+            </button>
+            <button
+              type="button"
+              onClick={() => setArchiveView("all")}
+              className={`rounded-xl px-4 py-2 text-sm font-black transition ${
+                archiveView === "all"
+                  ? "bg-slate-200 text-slate-900"
+                  : "border border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              Toutes ({stats.total})
+            </button>
+            <p className="ml-auto text-xs font-semibold text-slate-500">
+              Les tâches terminées ou dont l’échéance est passée sont conservées
+              automatiquement.
+            </p>
+          </div>
           <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center">
             <div className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-[var(--opc-border)] bg-slate-50 px-4 py-2.5">
               <Search className="h-4 w-4 text-slate-400" />
@@ -914,6 +998,13 @@ export function TasksWorkspace() {
                     >
                       <td className="px-5 py-4">
                         <div className="font-black text-[var(--opc-ink)]">{task.title}</div>
+                        {task.status === "done" ||
+                        Boolean(task.due_date && task.due_date < today) ? (
+                          <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-slate-600">
+                            <Archive className="h-3 w-3" />
+                            Archivée
+                          </span>
+                        ) : null}
                         {task.description ? <div className="mt-1 max-w-md truncate text-xs text-slate-500">{task.description}</div> : null}
                       </td>
                       <td className="px-5 py-4">
@@ -1220,13 +1311,37 @@ export function TasksWorkspace() {
                     <div>
                       <h3 className="font-black text-[var(--opc-ink)]">Journal d’avancement</h3>
                       <p className="mt-1 text-xs text-slate-500">
-                        Ces informations et photos alimentent automatiquement les rapports.
+                        Chaque journée, son avancement et ses photos restent archivés et modifiables.
                       </p>
                     </div>
-                    <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-[var(--opc-blue)]">
-                      {progressUpdates.length} mise{progressUpdates.length > 1 ? "s" : ""} à jour
-                    </span>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {editingProgressUpdateId ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            resetProgressForm(
+                              Number(editing.progress ?? 0),
+                              Number(editing.completed_quantity ?? 0),
+                            )
+                          }
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-black text-slate-600 hover:bg-slate-50"
+                        >
+                          Annuler la modification
+                        </button>
+                      ) : null}
+                      <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-[var(--opc-blue)]">
+                        {progressUpdates.length} journée{progressUpdates.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
                   </div>
+
+                  {editingProgressUpdateId ? (
+                    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+                      Modification de la journée du {progressDate}. Les photos
+                      existantes sont conservées ; vous pouvez en ajouter ou en
+                      retirer.
+                    </div>
+                  ) : null}
 
                   <div className="mt-4 grid grid-cols-3 gap-3">
                     <div className="rounded-xl bg-blue-50 p-3">
@@ -1364,7 +1479,9 @@ export function TasksWorkspace() {
                       <span className="block truncate text-xs text-slate-500">
                         {progressPhotos.length
                           ? `${progressPhotos.length} photo(s) sélectionnée(s)`
-                          : "JPG, PNG ou WebP — maximum 8 photos"}
+                          : editingProgressUpdateId
+                            ? "Ajouter des photos à cette journée"
+                            : "JPG, PNG ou WebP — maximum 8 photos"}
                       </span>
                     </span>
                     <input
@@ -1384,7 +1501,9 @@ export function TasksWorkspace() {
                     className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 py-3 text-sm font-black text-white disabled:opacity-60"
                   >
                     {progressSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
-                    Enregistrer l’avancement du jour
+                    {editingProgressUpdateId
+                      ? "Enregistrer les modifications de cette journée"
+                      : "Enregistrer l’avancement du jour"}
                   </button>
 
                   {progressUpdates.length ? (
@@ -1392,12 +1511,29 @@ export function TasksWorkspace() {
                       {progressUpdates.map((update) => (
                         <article key={update.id} className="rounded-xl border border-[var(--opc-border)] bg-white p-4">
                           <div className="flex items-center justify-between gap-3">
-                            <p className="text-sm font-black">{update.update_date}</p>
-                            <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-black text-[var(--opc-blue)]">{update.progress}%</span>
+                            <div>
+                              <p className="text-sm font-black">{update.update_date}</p>
+                              <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                                Journée archivée
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-black text-[var(--opc-blue)]">{update.progress}%</span>
+                              <button
+                                type="button"
+                                onClick={() => editProgressUpdate(update)}
+                                className="grid h-8 w-8 place-items-center rounded-lg border border-[var(--opc-border)] text-slate-600 hover:bg-slate-50"
+                                aria-label={`Modifier la journée du ${update.update_date}`}
+                                title="Modifier cette journée"
+                              >
+                                <Edit3 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
                           {update.work_done ? <p className="mt-3 text-sm"><strong>Réalisé :</strong> {update.work_done}</p> : null}
                           {update.ongoing_work ? <p className="mt-2 text-sm"><strong>En cours :</strong> {update.ongoing_work}</p> : null}
                           {update.blockers ? <p className="mt-2 text-sm text-red-700"><strong>Blocage :</strong> {update.blockers}</p> : null}
+                          {update.next_steps ? <p className="mt-2 text-sm"><strong>Étapes suivantes :</strong> {update.next_steps}</p> : null}
                           {update.comment ? <p className="mt-2 text-sm text-slate-500">{update.comment}</p> : null}
                           {update.photos?.length ? (
                             <div className="mt-3 grid grid-cols-3 gap-2">
