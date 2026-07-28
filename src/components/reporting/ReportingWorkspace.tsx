@@ -85,6 +85,7 @@ type TaskPrerequisiteStatus = {
   missing_certifications: number;
   missing_documents: number;
   invalid_tools: number;
+  invalid_equipment: number;
   missing_manual_items: number;
 };
 
@@ -239,7 +240,7 @@ export function ReportingWorkspace() {
             supabase
               .from("task_prerequisite_status")
               .select(
-                "task_id,total_requirements,missing_certifications,missing_documents,invalid_tools,missing_manual_items",
+                "task_id,total_requirements,missing_certifications,missing_documents,invalid_tools,invalid_equipment,missing_manual_items",
               )
               .in("task_id", taskIds),
           ]);
@@ -415,6 +416,7 @@ export function ReportingWorkspace() {
               ? Number(prerequisite.missing_certifications) +
                 Number(prerequisite.missing_documents) +
                 Number(prerequisite.invalid_tools) +
+                Number(prerequisite.invalid_equipment) +
                 Number(prerequisite.missing_manual_items)
               : 0;
             return {
@@ -452,6 +454,9 @@ export function ReportingWorkspace() {
                       : "",
                     prerequisite.invalid_tools
                       ? `${prerequisite.invalid_tools} outil(s)/engin(s)`
+                      : "",
+                    prerequisite.invalid_equipment
+                      ? `${prerequisite.invalid_equipment} équipement(s)`
                       : "",
                     prerequisite.missing_manual_items
                       ? `${prerequisite.missing_manual_items} contrôle(s)`
@@ -857,6 +862,7 @@ export function ReportingWorkspace() {
                                 ? Number(prerequisite.missing_certifications) +
                                   Number(prerequisite.missing_documents) +
                                   Number(prerequisite.invalid_tools) +
+                                  Number(prerequisite.invalid_equipment) +
                                   Number(prerequisite.missing_manual_items)
                                 : 0;
                               return (

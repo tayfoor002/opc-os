@@ -32,12 +32,19 @@ type Equipment = Option & {
   equipment_type: "material" | "equipment";
   status: string;
 };
-type Link = { id: string; label: string; meta?: string; satisfied?: boolean };
+type Link = {
+  id: string;
+  label: string;
+  meta?: string;
+  satisfied?: boolean;
+  canValidate?: boolean;
+};
 type Status = {
   total_requirements: number;
   missing_certifications: number;
   missing_documents: number;
   invalid_tools: number;
+  invalid_equipment: number;
   missing_manual_items: number;
 };
 type PendingDelete = {
@@ -52,12 +59,17 @@ const today = new Date().toISOString().slice(0, 10);
 export function TaskPrerequisitesPanel({
   taskId,
   projectId,
+  alstomSupervisorId,
+  avanzitSiteManagerId,
+  onStatusChange,
 }: {
   taskId: string;
   projectId: string;
+  alstomSupervisorId: string;
+  avanzitSiteManagerId: string;
+  onStatusChange?: () => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const [people, setPeople] = useState<Person[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [documents, setDocuments] = useState<Option[]>([]);
@@ -74,7 +86,7 @@ export function TaskPrerequisitesPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [personId, setPersonId] = useState("");
+  const [certificationPersonId, setCertificationPersonId] = useState("");
   const [certificationName, setCertificationName] = useState("");
   const [toolId, setToolId] = useState("");
   const [equipmentId, setEquipmentId] = useState("");
@@ -94,7 +106,6 @@ export function TaskPrerequisitesPanel({
       equipmentResult,
       documentsResult,
       certificationCatalogResult,
-      personnelResult,
       certificationsResult,
       taskToolsResult,
       taskEquipmentResult,
@@ -127,32 +138,30 @@ export function TaskPrerequisitesPanel({
         .order("title"),
       supabase
         .from("collaborator_certifications")
-        .select("certification_name")
+        .select("certification_name,collaborator_id,valid_until")
         .eq("project_id", projectId)
         .order("certification_name"),
       supabase
-        .from("task_personnel")
-        .select("collaborator_id,collaborators(full_name,company,role)")
-        .eq("task_id", taskId),
-      supabase
         .from("task_required_certifications")
-        .select("id,certification_name,notes")
+        .select(
+          "id,certification_name,notes,collaborator_id,validated,collaborators(full_name,company)",
+        )
         .eq("task_id", taskId),
       supabase
         .from("task_tools")
         .select(
-          "tool_id,quality_tools(name,asset_type,condition,calibration_required,next_calibration_date)",
+          "tool_id,validated,quality_tools(name,asset_type,condition,calibration_required,next_calibration_date)",
         )
         .eq("task_id", taskId),
       supabase
         .from("task_equipment")
         .select(
-          "equipment_id,usage_status,quantity,project_equipment(name,equipment_type,status)",
+          "equipment_id,usage_status,quantity,validated,project_equipment(name,equipment_type,status)",
         )
         .eq("task_id", taskId),
       supabase
         .from("task_document_requirements")
-        .select("id,label,requirement_type,document_id")
+        .select("id,label,requirement_type,document_id,validated")
         .eq("task_id", taskId),
       supabase
         .from("task_prerequisite_items")
@@ -161,7 +170,7 @@ export function TaskPrerequisitesPanel({
       supabase
         .from("task_prerequisite_status")
         .select(
-          "total_requirements,missing_certifications,missing_documents,invalid_tools,missing_manual_items",
+          "total_requirements,missing_certifications,missing_documents,invalid_tools,invalid_equipment,missing_manual_items",
         )
         .eq("task_id", taskId)
         .maybeSingle(),
@@ -173,7 +182,6 @@ export function TaskPrerequisitesPanel({
       equipmentResult.error,
       documentsResult.error,
       certificationCatalogResult.error,
-      personnelResult.error,
       certificationsResult.error,
       taskToolsResult.error,
       taskEquipmentResult.error,
@@ -189,14 +197,12 @@ export function TaskPrerequisitesPanel({
       return;
     }
 
-    setPeople(
-      (peopleResult.data ?? []).map((person) => ({
+    const loadedPeople = (peopleResult.data ?? []).map((person) => ({
         id: person.id,
         name: person.full_name,
         company: person.company,
         role: person.role,
-      })),
-    );
+      }));
     setTools((toolsResult.data ?? []) as Tool[]);
     setEquipment((equipmentResult.data ?? []) as Equipment[]);
     setDocuments(
@@ -212,24 +218,44 @@ export function TaskPrerequisitesPanel({
         ),
       ),
     ]);
-    setPersonnelLinks(
-      (personnelResult.data ?? []).map((link) => {
-        const person = Array.isArray(link.collaborators)
-          ? link.collaborators[0]
-          : link.collaborators;
+    const automaticPersonnel = [
+      alstomSupervisorId,
+      avanzitSiteManagerId,
+    ]
+      .filter(Boolean)
+      .map((personId) => loadedPeople.find((person) => person.id === personId))
+      .filter((person): person is Person => Boolean(person))
+      .map((person) => ({
+        id: person.id,
+        label: person.name,
+        meta: `${person.company} - ${person.role} · Affecté dans la tâche`,
+      }));
+    setPersonnelLinks(automaticPersonnel);
+    setCertificationLinks(
+      (certificationsResult.data ?? []).map((item) => {
+        const person = Array.isArray(item.collaborators)
+          ? item.collaborators[0]
+          : item.collaborators;
+        const qualificationIsValid = (
+          certificationCatalogResult.data ?? []
+        ).some(
+          (certification) =>
+            certification.collaborator_id === item.collaborator_id &&
+            certification.certification_name.toLowerCase() ===
+              item.certification_name.toLowerCase() &&
+            (!certification.valid_until ||
+              certification.valid_until >= today),
+        );
         return {
-          id: link.collaborator_id,
-          label: person?.full_name ?? "Collaborateur",
-          meta: `${person?.company ?? ""} - ${person?.role ?? ""}`,
+          id: item.id,
+          label: item.certification_name,
+          meta: `${person?.full_name ?? "Personnel non défini"} · ${
+            person?.company ?? ""
+          }${item.notes ? ` · ${item.notes}` : ""}`,
+          satisfied: item.validated,
+          canValidate: Boolean(item.collaborator_id) && qualificationIsValid,
         };
       }),
-    );
-    setCertificationLinks(
-      (certificationsResult.data ?? []).map((item) => ({
-        id: item.id,
-        label: item.certification_name,
-        meta: item.notes ?? undefined,
-      })),
     );
     setToolLinks(
       (taskToolsResult.data ?? []).map((link) => {
@@ -249,6 +275,9 @@ export function TaskPrerequisitesPanel({
               ? "Conforme"
               : "Non conforme"
           }`,
+          satisfied: link.validated,
+          canValidate:
+            tool?.condition === "serviceable" && calibrated,
         };
       }),
     );
@@ -261,6 +290,8 @@ export function TaskPrerequisitesPanel({
           id: link.equipment_id,
           label: item?.name ?? "Équipement",
           meta: `${item?.equipment_type ?? "material"} - ${link.usage_status} - Qté ${link.quantity}`,
+          satisfied: link.validated,
+          canValidate: item?.status !== "out_of_service",
         };
       }),
     );
@@ -271,6 +302,8 @@ export function TaskPrerequisitesPanel({
         meta: `${item.requirement_type} - ${
           item.document_id ? "Disponible" : "Manquant"
         }`,
+        satisfied: item.validated,
+        canValidate: Boolean(item.document_id),
       })),
     );
     setManualLinks(
@@ -289,14 +322,43 @@ export function TaskPrerequisitesPanel({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- task prerequisites synchronization
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, projectId]);
+  }, [
+    taskId,
+    projectId,
+    alstomSupervisorId,
+    avanzitSiteManagerId,
+  ]);
 
   async function insert(table: string, payload: Record<string, unknown>) {
     setSaving(true);
     setError("");
     const result = await supabase.from(table).insert(payload);
     if (result.error) setError(result.error.message);
-    else await load();
+    else {
+      await load();
+      onStatusChange?.();
+    }
+    setSaving(false);
+  }
+
+  async function toggleValidation(
+    table: string,
+    column: string,
+    value: string,
+    validated: boolean,
+  ) {
+    setSaving(true);
+    setError("");
+    const result = await supabase
+      .from(table)
+      .update({ validated })
+      .eq(column, value)
+      .eq("task_id", taskId);
+    if (result.error) setError(result.error.message);
+    else {
+      await load();
+      onStatusChange?.();
+    }
     setSaving(false);
   }
 
@@ -312,6 +374,7 @@ export function TaskPrerequisitesPanel({
     else {
       setPendingDelete(null);
       await load();
+      onStatusChange?.();
     }
     setSaving(false);
   }
@@ -320,6 +383,7 @@ export function TaskPrerequisitesPanel({
     (status?.missing_certifications ?? 0) +
     (status?.missing_documents ?? 0) +
     (status?.invalid_tools ?? 0) +
+    (status?.invalid_equipment ?? 0) +
     (status?.missing_manual_items ?? 0);
   const configured = Boolean(status?.total_requirements);
   const compliant = configured && missing === 0;
@@ -372,6 +436,9 @@ export function TaskPrerequisitesPanel({
               {status?.invalid_tools ? (
                 <span>{status.invalid_tools} outil(s)/engin(s)</span>
               ) : null}
+              {status?.invalid_equipment ? (
+                <span>{status.invalid_equipment} équipement(s)</span>
+              ) : null}
               {status?.missing_manual_items ? (
                 <span>{status.missing_manual_items} autre(s)</span>
               ) : null}
@@ -411,58 +478,96 @@ export function TaskPrerequisitesPanel({
       ) : null}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <PrerequisiteBlock
-          icon={HardHat}
-          title="Personnel affecté"
-          links={personnelLinks}
-          options={people.filter(
-            (person) => !personnelLinks.some((link) => link.id === person.id),
-          )}
-          value={personId}
-          onValueChange={setPersonId}
-          onAdd={() => {
-            if (!personId) return;
-            void insert("task_personnel", {
-              task_id: taskId,
-              collaborator_id: personId,
-            });
-            setPersonId("");
-          }}
-          onDelete={(link) =>
-            setPendingDelete({
-              table: "task_personnel",
-              column: "collaborator_id",
-              value: link.id,
-              subject: link.label,
-            })
-          }
-        />
+        <div className="rounded-2xl border border-[var(--opc-border)] bg-white p-4">
+          <h4 className="flex items-center gap-2 font-black">
+            <HardHat className="h-4 w-4 text-[var(--opc-blue)]" />
+            Personnel affecté automatiquement
+          </h4>
+          <p className="mt-1 text-xs text-slate-500">
+            Cette liste reprend les responsables Alstom et Avanzit choisis plus
+            haut dans la tâche.
+          </p>
+          <LinkList links={personnelLinks} />
+        </div>
 
-        <TextPrerequisiteBlock
-          icon={BadgeCheck}
-          title="Habilitations requises"
-          value={certificationName}
-          placeholder="Ex. Habilitation électrique B1"
-          suggestions={certificationSuggestions}
-          links={certificationLinks}
-          onValueChange={setCertificationName}
-          onAdd={() => {
-            if (!certificationName.trim()) return;
-            void insert("task_required_certifications", {
-              task_id: taskId,
-              certification_name: certificationName.trim(),
-            });
-            setCertificationName("");
-          }}
-          onDelete={(link) =>
-            setPendingDelete({
-              table: "task_required_certifications",
-              column: "id",
-              value: link.id,
-              subject: link.label,
-            })
-          }
-        />
+        <div className="rounded-2xl border border-[var(--opc-border)] bg-white p-4">
+          <h4 className="flex items-center gap-2 font-black">
+            <BadgeCheck className="h-4 w-4 text-[var(--opc-blue)]" />
+            Habilitations requises par personne
+          </h4>
+          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+            <select
+              value={certificationPersonId}
+              onChange={(event) =>
+                setCertificationPersonId(event.target.value)
+              }
+              className="input"
+            >
+              <option value="">Choisir Alstom ou Avanzit...</option>
+              {personnelLinks.map((person) => (
+                <option key={person.id} value={person.id}>
+                  {person.label} — {person.meta}
+                </option>
+              ))}
+            </select>
+            <input
+              value={certificationName}
+              onChange={(event) => setCertificationName(event.target.value)}
+              placeholder="Ex. Habilitation électrique B1"
+              list={
+                certificationSuggestions.length
+                  ? "certification-suggestions"
+                  : undefined
+              }
+              className="input"
+            />
+            {certificationSuggestions.length ? (
+              <datalist id="certification-suggestions">
+                {certificationSuggestions.map((suggestion) => (
+                  <option key={suggestion} value={suggestion} />
+                ))}
+              </datalist>
+            ) : null}
+            <button
+              type="button"
+              disabled={
+                saving ||
+                !certificationPersonId ||
+                !certificationName.trim()
+              }
+              onClick={() => {
+                void insert("task_required_certifications", {
+                  task_id: taskId,
+                  collaborator_id: certificationPersonId,
+                  certification_name: certificationName.trim(),
+                });
+                setCertificationName("");
+              }}
+              className="grid h-11 w-11 place-items-center rounded-xl bg-[var(--opc-blue)] text-white disabled:opacity-50"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </div>
+          <LinkList
+            links={certificationLinks}
+            onToggle={(link, checked) =>
+              void toggleValidation(
+                "task_required_certifications",
+                "id",
+                link.id,
+                checked,
+              )
+            }
+            onDelete={(link) =>
+              setPendingDelete({
+                table: "task_required_certifications",
+                column: "id",
+                value: link.id,
+                subject: link.label,
+              })
+            }
+          />
+        </div>
 
         <PrerequisiteBlock
           icon={Wrench}
@@ -490,6 +595,14 @@ export function TaskPrerequisitesPanel({
               value: link.id,
               subject: link.label,
             })
+          }
+          onToggle={(link, checked) =>
+            void toggleValidation(
+              "task_tools",
+              "tool_id",
+              link.id,
+              checked,
+            )
           }
         />
 
@@ -522,6 +635,14 @@ export function TaskPrerequisitesPanel({
               value: link.id,
               subject: link.label,
             })
+          }
+          onToggle={(link, checked) =>
+            void toggleValidation(
+              "task_equipment",
+              "equipment_id",
+              link.id,
+              checked,
+            )
           }
         />
 
@@ -590,6 +711,14 @@ export function TaskPrerequisitesPanel({
           </div>
           <LinkList
             links={documentLinks}
+            onToggle={(link, checked) =>
+              void toggleValidation(
+                "task_document_requirements",
+                "id",
+                link.id,
+                checked,
+              )
+            }
             onDelete={(link) =>
               setPendingDelete({
                 table: "task_document_requirements",
@@ -655,6 +784,7 @@ export function TaskPrerequisitesPanel({
                       .update({ satisfied: event.target.checked })
                       .eq("id", link.id);
                     await load();
+                    onStatusChange?.();
                   }}
                   className="h-5 w-5 accent-emerald-600"
                 />
@@ -706,6 +836,7 @@ function PrerequisiteBlock({
   onValueChange,
   onAdd,
   onDelete,
+  onToggle,
 }: {
   icon: typeof Wrench;
   title: string;
@@ -715,6 +846,7 @@ function PrerequisiteBlock({
   onValueChange: (value: string) => void;
   onAdd: () => void;
   onDelete: (link: Link) => void;
+  onToggle?: (link: Link, checked: boolean) => void;
 }) {
   return (
     <div className="rounded-2xl border border-[var(--opc-border)] bg-white p-4">
@@ -743,62 +875,7 @@ function PrerequisiteBlock({
           <Plus className="h-4 w-4" />
         </button>
       </div>
-      <LinkList links={links} onDelete={onDelete} />
-    </div>
-  );
-}
-
-function TextPrerequisiteBlock({
-  icon: Icon,
-  title,
-  value,
-  placeholder,
-  suggestions,
-  links,
-  onValueChange,
-  onAdd,
-  onDelete,
-}: {
-  icon: typeof BadgeCheck;
-  title: string;
-  value: string;
-  placeholder: string;
-  suggestions?: string[];
-  links: Link[];
-  onValueChange: (value: string) => void;
-  onAdd: () => void;
-  onDelete: (link: Link) => void;
-}) {
-  return (
-    <div className="rounded-2xl border border-[var(--opc-border)] bg-white p-4">
-      <h4 className="flex items-center gap-2 font-black">
-        <Icon className="h-4 w-4 text-[var(--opc-blue)]" /> {title}
-      </h4>
-      <div className="mt-3 flex gap-2">
-        <input
-          value={value}
-          onChange={(event) => onValueChange(event.target.value)}
-          placeholder={placeholder}
-          list={suggestions?.length ? "certification-suggestions" : undefined}
-          className="min-w-0 flex-1 rounded-xl border border-[var(--opc-border)] px-3 py-2.5 text-sm"
-        />
-        {suggestions?.length ? (
-          <datalist id="certification-suggestions">
-            {suggestions.map((suggestion) => (
-              <option key={suggestion} value={suggestion} />
-            ))}
-          </datalist>
-        ) : null}
-        <button
-          type="button"
-          onClick={onAdd}
-          disabled={!value.trim()}
-          className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--opc-blue)] text-white disabled:opacity-50"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
-      </div>
-      <LinkList links={links} onDelete={onDelete} />
+      <LinkList links={links} onDelete={onDelete} onToggle={onToggle} />
     </div>
   );
 }
@@ -806,9 +883,11 @@ function TextPrerequisiteBlock({
 function LinkList({
   links,
   onDelete,
+  onToggle,
 }: {
   links: Link[];
-  onDelete: (link: Link) => void;
+  onDelete?: (link: Link) => void;
+  onToggle?: (link: Link, checked: boolean) => void;
 }) {
   return (
     <div className="mt-3 space-y-2">
@@ -817,13 +896,38 @@ function LinkList({
           key={link.id}
           className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 text-sm"
         >
+          {onToggle ? (
+            <input
+              type="checkbox"
+              checked={Boolean(link.satisfied)}
+              disabled={!link.canValidate}
+              onChange={(event) => onToggle(link, event.target.checked)}
+              className="h-5 w-5 accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label={`Valider ${link.label}`}
+            />
+          ) : null}
           <div className="min-w-0 flex-1">
             <p className="font-bold">{link.label}</p>
             {link.meta ? (
               <p className="text-xs text-slate-500">{link.meta}</p>
             ) : null}
+            {onToggle ? (
+              <p
+                className={`mt-1 text-[10px] font-black ${
+                  link.satisfied ? "text-emerald-700" : "text-amber-700"
+                }`}
+              >
+                {link.satisfied
+                  ? "Validation confirmée"
+                  : link.canValidate
+                    ? "À cocher après contrôle"
+                    : "Validation impossible : corrigez l’élément"}
+              </p>
+            ) : null}
           </div>
-          <DeleteButton onClick={() => onDelete(link)} />
+          {onDelete ? (
+            <DeleteButton onClick={() => onDelete(link)} />
+          ) : null}
         </div>
       ))}
       {!links.length ? (

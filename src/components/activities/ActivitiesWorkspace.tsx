@@ -61,7 +61,7 @@ export function ActivitiesWorkspace() {
       supabase.from("zones").select("id,code,name").eq("project_id", projectResult.data.id).eq("active", true).order("sort_order"),
       supabase.from("phases").select("id,zone_id,code,name").eq("project_id", projectResult.data.id).eq("active", true).order("sort_order"),
       supabase.from("zone_elements").select("id,zone_id,code,name,element_type").eq("project_id", projectResult.data.id).eq("active", true).order("sort_order"),
-      supabase.from("task_prerequisite_status").select("task_id,activity_id,total_requirements,missing_certifications,missing_documents,invalid_tools,missing_manual_items"),
+      supabase.from("task_prerequisite_status").select("task_id,activity_id,total_requirements,missing_certifications,missing_documents,invalid_tools,invalid_equipment,missing_manual_items"),
     ]);
     if (result.error) setError(result.error.message); else setActivities((result.data ?? []) as Activity[]);
     if (collaboratorsResult.error) setError(collaboratorsResult.error.message); else setCollaborators((collaboratorsResult.data ?? []) as CollaboratorOption[]);
@@ -122,6 +122,7 @@ export function ActivitiesWorkspace() {
           Number(status.missing_certifications) +
           Number(status.missing_documents) +
           Number(status.invalid_tools) +
+          Number(status.invalid_equipment) +
           Number(status.missing_manual_items);
         if (Number(status.total_requirements) > 0 && missing === 0) continue;
         const details =
@@ -136,6 +137,9 @@ export function ActivitiesWorkspace() {
                   : "",
                 status.invalid_tools
                   ? `${status.invalid_tools} outil(s)/engin(s)`
+                  : "",
+                status.invalid_equipment
+                  ? `${status.invalid_equipment} équipement(s)`
                   : "",
                 status.missing_manual_items
                   ? `${status.missing_manual_items} contrôle(s)`

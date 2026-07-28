@@ -88,6 +88,15 @@ type TaskProgressUpdate = {
   photos: TaskProgressPhoto[];
 };
 
+type TaskPrerequisiteSummary = {
+  total_requirements: number;
+  missing_certifications: number;
+  missing_documents: number;
+  invalid_tools: number;
+  invalid_equipment: number;
+  missing_manual_items: number;
+};
+
 const statusLabels: Record<TaskStatus, string> = {
   todo: "À faire",
   in_progress: "En cours",
@@ -122,6 +131,9 @@ export function TasksWorkspace() {
   const [zones, setZones] = useState<ZoneOption[]>([]);
   const [phases, setPhases] = useState<PhaseOption[]>([]);
   const [zoneElements, setZoneElements] = useState<ZoneElementOption[]>([]);
+  const [prerequisiteByTask, setPrerequisiteByTask] = useState<
+    Record<string, TaskPrerequisiteSummary>
+  >({});
   const [projectId, setProjectId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -184,6 +196,7 @@ export function TasksWorkspace() {
       zonesResult,
       phasesResult,
       zoneElementsResult,
+      prerequisiteResult,
     ] = await Promise.all([
       supabase.from("activities").select("*").eq("project_id", id).order("code"),
       supabase
@@ -224,6 +237,11 @@ export function TasksWorkspace() {
         .eq("project_id", id)
         .eq("active", true)
         .order("sort_order"),
+      supabase
+        .from("task_prerequisite_status")
+        .select(
+          "task_id,total_requirements,missing_certifications,missing_documents,invalid_tools,invalid_equipment,missing_manual_items",
+        ),
     ]);
 
     if (activitiesResult.error) setError(activitiesResult.error.message);
@@ -240,6 +258,23 @@ export function TasksWorkspace() {
     else setPhases((phasesResult.data ?? []) as PhaseOption[]);
     if (zoneElementsResult.error) setError(zoneElementsResult.error.message);
     else setZoneElements((zoneElementsResult.data ?? []) as ZoneElementOption[]);
+    if (!prerequisiteResult.error) {
+      setPrerequisiteByTask(
+        Object.fromEntries(
+          (prerequisiteResult.data ?? []).map((item) => [
+            item.task_id,
+            {
+              total_requirements: Number(item.total_requirements),
+              missing_certifications: Number(item.missing_certifications),
+              missing_documents: Number(item.missing_documents),
+              invalid_tools: Number(item.invalid_tools),
+              invalid_equipment: Number(item.invalid_equipment),
+              missing_manual_items: Number(item.missing_manual_items),
+            },
+          ]),
+        ),
+      );
+    }
 
     if (tasksResult.error) {
       setError(tasksResult.error.message);
@@ -720,12 +755,25 @@ export function TasksWorkspace() {
                   <th className="px-5 py-4">Dates</th>
                   <th className="px-5 py-4">Priorité</th>
                   <th className="px-5 py-4">Statut</th>
+                  <th className="px-5 py-4">Prérequis</th>
                   <th className="px-5 py-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleTasks.map((task) => {
                   const overdue = Boolean(task.due_date && task.due_date < today && task.status !== "done");
+                  const prerequisite = prerequisiteByTask[task.id];
+                  const missingPrerequisites = prerequisite
+                    ? prerequisite.missing_certifications +
+                      prerequisite.missing_documents +
+                      prerequisite.invalid_tools +
+                      prerequisite.invalid_equipment +
+                      prerequisite.missing_manual_items
+                    : 0;
+                  const prerequisiteConfigured =
+                    (prerequisite?.total_requirements ?? 0) > 0;
+                  const prerequisiteCompliant =
+                    prerequisiteConfigured && missingPrerequisites === 0;
                   return (
                     <tr
                       key={task.id}
@@ -738,7 +786,11 @@ export function TasksWorkspace() {
                           openEdit(task);
                         }
                       }}
-                      className="cursor-pointer border-b border-slate-100 text-sm outline-none transition hover:bg-blue-50/50 focus-visible:bg-blue-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--opc-blue)]"
+                      className={`cursor-pointer border-b border-slate-100 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--opc-blue)] ${
+                        prerequisiteCompliant
+                          ? "bg-emerald-50/70 hover:bg-emerald-100/70"
+                          : "bg-red-50/60 hover:bg-red-100/60"
+                      }`}
                       aria-label={`Voir le contenu de la tâche ${task.title}`}
                     >
                       <td className="px-5 py-4">
@@ -823,6 +875,21 @@ export function TasksWorkspace() {
                           {Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                         </select>
                       </td>
+                      <td className="px-5 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${
+                            prerequisiteCompliant
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-red-100 text-red-700"
+                          }`}
+                        >
+                          {prerequisiteCompliant
+                            ? "Conforme"
+                            : prerequisiteConfigured
+                              ? `${missingPrerequisites} anomalie(s)`
+                              : "À configurer"}
+                        </span>
+                      </td>
                       <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-2">
                           <button type="button" onClick={() => openEdit(task)} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--opc-border)] text-slate-600 hover:bg-slate-50" aria-label="Modifier">
@@ -838,7 +905,7 @@ export function TasksWorkspace() {
                 })}
 
                 {visibleTasks.length === 0 ? (
-                  <tr><td colSpan={8} className="px-5 py-16 text-center text-sm text-slate-400">Aucune tâche ne correspond aux filtres.</td></tr>
+                  <tr><td colSpan={9} className="px-5 py-16 text-center text-sm text-slate-400">Aucune tâche ne correspond aux filtres.</td></tr>
                 ) : null}
               </tbody>
             </table>
@@ -1077,6 +1144,9 @@ export function TasksWorkspace() {
                   <TaskPrerequisitesPanel
                     taskId={editing.id}
                     projectId={projectId}
+                    alstomSupervisorId={form.alstom_supervisor_id}
+                    avanzitSiteManagerId={form.avanzit_site_manager_id}
+                    onStatusChange={() => void loadData(true)}
                   />
                 ) : null}
               </div>
