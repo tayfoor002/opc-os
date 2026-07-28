@@ -54,6 +54,70 @@ function slugDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+const PDF_COLOR_PROPERTIES = [
+  "color",
+  "background-color",
+  "border-top-color",
+  "border-right-color",
+  "border-bottom-color",
+  "border-left-color",
+  "outline-color",
+  "text-decoration-color",
+  "column-rule-color",
+  "fill",
+  "stroke",
+] as const;
+
+const MODERN_COLOR_FUNCTION =
+  /\b(?:lab|lch|oklab|oklch|color|color-mix)\s*\(/i;
+
+function rasterizeColor(
+  value: string,
+  context: CanvasRenderingContext2D,
+) {
+  context.clearRect(0, 0, 1, 1);
+  context.fillStyle = "#000000";
+  context.fillStyle = value;
+  context.fillRect(0, 0, 1, 1);
+  const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha / 255})`;
+}
+
+/**
+ * html2canvas 1.x cannot parse the modern Lab/Oklab colors emitted by
+ * Tailwind 4. Normalize only the cloned report so the live UI keeps its exact
+ * styling while the PDF renderer receives universally supported RGB values.
+ */
+function normalizePdfCloneColors(root: HTMLElement) {
+  const canvas = root.ownerDocument.createElement("canvas");
+  canvas.width = 1;
+  canvas.height = 1;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const view = root.ownerDocument.defaultView;
+  if (!context || !view) return;
+
+  const elements: Element[] = [root, ...Array.from(root.querySelectorAll("*"))];
+  for (const element of elements) {
+    if (!(element instanceof view.HTMLElement) && !(element instanceof view.SVGElement)) {
+      continue;
+    }
+    const computed = view.getComputedStyle(element);
+    for (const property of PDF_COLOR_PROPERTIES) {
+      const value = computed.getPropertyValue(property).trim();
+      if (value && MODERN_COLOR_FUNCTION.test(value)) {
+        element.style.setProperty(property, rasterizeColor(value, context), "important");
+      }
+    }
+
+    for (const property of ["box-shadow", "text-shadow", "background-image"]) {
+      const value = computed.getPropertyValue(property);
+      if (MODERN_COLOR_FUNCTION.test(value)) {
+        element.style.setProperty(property, "none", "important");
+      }
+    }
+  }
+}
+
 export async function downloadReportPdf(
   element: HTMLElement,
   fileName = `rapport-pdd-${slugDate()}.pdf`,
@@ -69,6 +133,9 @@ export async function downloadReportPdf(
     logging: false,
     windowWidth: element.scrollWidth,
     windowHeight: element.scrollHeight,
+    onclone: (_document, clonedElement) => {
+      normalizePdfCloneColors(clonedElement);
+    },
   });
 
   const pdf = new jsPDF({
