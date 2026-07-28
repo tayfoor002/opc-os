@@ -64,6 +64,7 @@ const PDF_COLOR_PROPERTIES = [
   "outline-color",
   "text-decoration-color",
   "column-rule-color",
+  "-webkit-text-stroke-color",
   "fill",
   "stroke",
 ] as const;
@@ -88,7 +89,10 @@ function rasterizeColor(
  * Tailwind 4. Normalize only the cloned report so the live UI keeps its exact
  * styling while the PDF renderer receives universally supported RGB values.
  */
-function normalizePdfCloneColors(root: HTMLElement) {
+function normalizePdfCloneColors(
+  root: HTMLElement,
+  includeDescendants = true,
+) {
   const canvas = root.ownerDocument.createElement("canvas");
   canvas.width = 1;
   canvas.height = 1;
@@ -96,7 +100,9 @@ function normalizePdfCloneColors(root: HTMLElement) {
   const view = root.ownerDocument.defaultView;
   if (!context || !view) return;
 
-  const elements: Element[] = [root, ...Array.from(root.querySelectorAll("*"))];
+  const elements: Element[] = includeDescendants
+    ? [root, ...Array.from(root.querySelectorAll("*"))]
+    : [root];
   for (const element of elements) {
     if (!(element instanceof view.HTMLElement) && !(element instanceof view.SVGElement)) {
       continue;
@@ -133,7 +139,9 @@ export async function downloadReportPdf(
     logging: false,
     windowWidth: element.scrollWidth,
     windowHeight: element.scrollHeight,
-    onclone: (_document, clonedElement) => {
+    onclone: (clonedDocument, clonedElement) => {
+      normalizePdfCloneColors(clonedDocument.documentElement, false);
+      normalizePdfCloneColors(clonedDocument.body, false);
       normalizePdfCloneColors(clonedElement);
     },
   });
