@@ -1,6 +1,7 @@
 import { Bell, CalendarDays, LogOut, Search, Sparkles } from "lucide-react";
 
 import { logout } from "@/app/auth/actions";
+import { FullscreenButton } from "@/components/layout/FullscreenButton";
 import { createClient } from "@/lib/supabase/server";
 
 export async function Header() {
@@ -29,6 +30,7 @@ export async function Header() {
         <button className="grid h-10 w-10 place-items-center rounded-xl border">
           <CalendarDays className="h-4 w-4" />
         </button>
+        <FullscreenButton />
         <button className="relative grid h-10 w-10 place-items-center rounded-xl border">
           <Bell className="h-4 w-4" />
           <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--opc-red)]" />
