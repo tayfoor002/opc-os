@@ -364,6 +364,106 @@ export async function updateTaskProgressUpdate(
   return { success: true };
 }
 
+export async function deleteTaskProgressUpdate(
+  updateId: string,
+): Promise<TaskProgressActionResult> {
+  const parsedId = z.string().uuid().safeParse(updateId);
+  if (!parsedId.success) {
+    return { success: false, error: "Journée d’avancement invalide." };
+  }
+
+  const supabase = await createClient();
+  const updateResult = await supabase
+    .from("task_progress_updates")
+    .select("id,task_id")
+    .eq("id", parsedId.data)
+    .maybeSingle();
+  if (updateResult.error || !updateResult.data) {
+    return { success: false, error: "La journée d’avancement est introuvable." };
+  }
+
+  const [taskResult, photosResult] = await Promise.all([
+    supabase
+      .from("tasks")
+      .select("id,status,progress_mode,target_quantity")
+      .eq("id", updateResult.data.task_id)
+      .maybeSingle(),
+    supabase
+      .from("task_progress_photos")
+      .select("file_path")
+      .eq("update_id", parsedId.data),
+  ]);
+  if (taskResult.error || !taskResult.data) {
+    return { success: false, error: "La tâche liée est introuvable." };
+  }
+  if (photosResult.error) {
+    return { success: false, error: photosResult.error.message };
+  }
+
+  const deleteResult = await supabase
+    .from("task_progress_updates")
+    .delete()
+    .eq("id", parsedId.data);
+  if (deleteResult.error) {
+    return { success: false, error: deleteResult.error.message };
+  }
+
+  const paths = (photosResult.data ?? [])
+    .map((photo) => photo.file_path)
+    .filter(Boolean);
+  if (paths.length) {
+    await supabase.storage.from("task-progress").remove(paths);
+  }
+
+  if (taskResult.data.progress_mode !== "building") {
+    const latestResult = await supabase
+      .from("task_progress_updates")
+      .select("progress")
+      .eq("task_id", updateResult.data.task_id)
+      .order("update_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestResult.error) {
+      return { success: false, error: latestResult.error.message };
+    }
+
+    const latestProgress = Number(latestResult.data?.progress ?? 0);
+    const taskPatch: Record<string, unknown> = {
+      progress: latestProgress,
+      status:
+        latestProgress >= 100
+          ? "done"
+          : latestProgress > 0
+            ? taskResult.data.status === "blocked"
+              ? "blocked"
+              : "in_progress"
+            : taskResult.data.status === "blocked"
+              ? "blocked"
+              : "todo",
+    };
+    if (taskResult.data.progress_mode === "quantity") {
+      taskPatch.completed_quantity =
+        Math.round(
+          (Number(taskResult.data.target_quantity ?? 0) * latestProgress) / 100 *
+            100,
+        ) / 100;
+    }
+    const taskUpdateResult = await supabase
+      .from("tasks")
+      .update(taskPatch)
+      .eq("id", updateResult.data.task_id);
+    if (taskUpdateResult.error) {
+      return { success: false, error: taskUpdateResult.error.message };
+    }
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath("/activities");
+  revalidatePath("/reporting");
+  return { success: true };
+}
+
 export async function getTaskProgressPhotoUrls(
   paths: string[],
 ): Promise<Record<string, string>> {

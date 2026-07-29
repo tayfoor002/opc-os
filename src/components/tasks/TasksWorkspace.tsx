@@ -27,6 +27,7 @@ import {
 import { getTaskDocumentPreview } from "@/app/documents/actions";
 import {
   createTaskProgressUpdate,
+  deleteTaskProgressUpdate,
   deleteTaskProgressPhoto,
   getTaskProgressPhotoUrls,
   updateTaskProgressUpdate,
@@ -151,6 +152,9 @@ export function TasksWorkspace() {
   const [prerequisiteByTask, setPrerequisiteByTask] = useState<
     Record<string, TaskPrerequisiteSummary>
   >({});
+  const [progressHistoryTaskIds, setProgressHistoryTaskIds] = useState<
+    string[]
+  >([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -188,9 +192,13 @@ export function TasksWorkspace() {
   const [nextSteps, setNextSteps] = useState("");
   const [progressComment, setProgressComment] = useState("");
   const [progressPhotos, setProgressPhotos] = useState<File[]>([]);
+  const [progressEditorOpen, setProgressEditorOpen] = useState(false);
   const [editingProgressUpdateId, setEditingProgressUpdateId] = useState<
     string | null
   >(null);
+  const [progressUpdateToDelete, setProgressUpdateToDelete] =
+    useState<TaskProgressUpdate | null>(null);
+  const [progressUpdateDeleting, setProgressUpdateDeleting] = useState(false);
   const [photoToDelete, setPhotoToDelete] = useState<TaskProgressPhoto | null>(
     null,
   );
@@ -220,6 +228,7 @@ export function TasksWorkspace() {
       phasesResult,
       zoneElementsResult,
       prerequisiteResult,
+      progressHistoryResult,
     ] = await Promise.all([
       supabase.from("activities").select("*").eq("project_id", id).order("code"),
       supabase
@@ -265,6 +274,10 @@ export function TasksWorkspace() {
         .select(
           "task_id,total_requirements,missing_certifications,missing_documents,invalid_tools,invalid_equipment,missing_manual_items",
         ),
+      supabase
+        .from("task_progress_updates")
+        .select("task_id")
+        .eq("project_id", id),
     ]);
 
     if (activitiesResult.error) setError(activitiesResult.error.message);
@@ -297,6 +310,13 @@ export function TasksWorkspace() {
           ]),
         ),
       );
+    }
+    if (!progressHistoryResult.error) {
+      setProgressHistoryTaskIds([
+        ...new Set(
+          (progressHistoryResult.data ?? []).map((item) => item.task_id),
+        ),
+      ]);
     }
 
     if (tasksResult.error) {
@@ -422,12 +442,15 @@ export function TasksWorkspace() {
       const matchesPriority = priorityFilter === "all" || task.priority === priorityFilter;
       const matchesOwner = ownerFilter === "all" || task.owner === ownerFilter;
       const matchesActivity = activityFilter === "all" || task.activity_id === activityFilter;
-      const archived =
+      const completedOrPast =
         task.status === "done" ||
         Boolean(task.due_date && task.due_date < today);
+      const hasArchivedProgress = progressHistoryTaskIds.includes(task.id);
       const matchesArchive =
         archiveView === "all" ||
-        (archiveView === "archived" ? archived : !archived);
+        (archiveView === "archived"
+          ? completedOrPast || hasArchivedProgress
+          : !completedOrPast);
       return matchesQuery && matchesStatus && matchesPriority && matchesOwner && matchesActivity && matchesArchive;
     });
 
@@ -440,7 +463,7 @@ export function TasksWorkspace() {
       const bDate = b.due_date ?? "9999-12-31";
       return sortBy === "due_desc" ? bDate.localeCompare(aDate) : aDate.localeCompare(bDate);
     });
-  }, [tasks, query, statusFilter, priorityFilter, ownerFilter, activityFilter, sortBy, archiveView, today]);
+  }, [tasks, query, statusFilter, priorityFilter, ownerFilter, activityFilter, sortBy, archiveView, today, progressHistoryTaskIds]);
 
   const stats = {
     total: tasks.length,
@@ -449,10 +472,16 @@ export function TasksWorkspace() {
     blocked: tasks.filter((task) => task.status === "blocked").length,
     overdue: tasks.filter((task) => task.due_date && task.due_date < today && task.status !== "done").length,
     done: tasks.filter((task) => task.status === "done").length,
+    current: tasks.filter(
+      (task) =>
+        task.status !== "done" &&
+        !Boolean(task.due_date && task.due_date < today),
+    ).length,
     archived: tasks.filter(
       (task) =>
         task.status === "done" ||
-        Boolean(task.due_date && task.due_date < today),
+        Boolean(task.due_date && task.due_date < today) ||
+        progressHistoryTaskIds.includes(task.id),
     ).length,
   };
 
@@ -519,10 +548,21 @@ export function TasksWorkspace() {
     setNextSteps("");
     setProgressComment("");
     setProgressPhotos([]);
+    setProgressEditorOpen(false);
     setEditingProgressUpdateId(null);
   }
 
+  function openProgressEditor() {
+    if (!editing) return;
+    resetProgressForm(
+      currentTaskProgress,
+      Number(form.completed_quantity ?? progressQuantity),
+    );
+    setProgressEditorOpen(true);
+  }
+
   function editProgressUpdate(update: TaskProgressUpdate) {
+    setProgressEditorOpen(true);
     setEditingProgressUpdateId(update.id);
     setProgressDate(update.update_date);
     setProgressValue(Number(update.progress));
@@ -717,6 +757,14 @@ export function TasksWorkspace() {
     if (!editing) return;
     setProgressSaving(true);
     setError("");
+    if (form.progress_mode === "building") {
+      const buildingError = await persistBuildingPhases();
+      if (buildingError) {
+        setError(buildingError);
+        setProgressSaving(false);
+        return;
+      }
+    }
     const data = new FormData();
     const resolvedProgress =
       form.progress_mode === "quantity"
@@ -751,27 +799,20 @@ export function TasksWorkspace() {
     setProgressSaving(false);
   }
 
-  async function saveBuildingProgress() {
-    if (!editing || !buildingPhases.length) return;
-    setProgressSaving(true);
-    setError("");
-    let firstError: { message: string } | null = null;
+  async function persistBuildingPhases() {
+    if (!editing || !buildingPhases.length) {
+      return "Les étapes de construction ne sont pas disponibles.";
+    }
     for (const phase of buildingPhases) {
       const result = await supabase
         .from("task_building_phases")
         .update({ progress: phase.progress })
         .eq("id", phase.id);
       if (result.error) {
-        firstError = result.error;
-        break;
+        return result.error.message;
       }
     }
-    if (firstError) {
-      setError(firstError.message);
-    } else {
-      await Promise.all([loadTaskProgress(editing.id), loadData(true)]);
-    }
-    setProgressSaving(false);
+    return null;
   }
 
   async function confirmPhotoDelete() {
@@ -786,6 +827,26 @@ export function TasksWorkspace() {
       await loadTaskProgress(editing.id);
     }
     setPhotoDeleting(false);
+  }
+
+  async function confirmProgressUpdateDelete() {
+    if (!progressUpdateToDelete || !editing) return;
+    setProgressUpdateDeleting(true);
+    setError("");
+    const result = await deleteTaskProgressUpdate(progressUpdateToDelete.id);
+    if (!result.success) {
+      setError(result.error);
+    } else {
+      if (editingProgressUpdateId === progressUpdateToDelete.id) {
+        resetProgressForm(
+          Number(editing.progress ?? 0),
+          Number(editing.completed_quantity ?? 0),
+        );
+      }
+      setProgressUpdateToDelete(null);
+      await Promise.all([loadTaskProgress(editing.id), loadData(true)]);
+    }
+    setProgressUpdateDeleting(false);
   }
 
   async function confirmDelete() {
@@ -848,7 +909,7 @@ export function TasksWorkspace() {
                   : "border border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"
               }`}
             >
-              Tâches actives ({stats.total - stats.archived})
+              Tâches actives ({stats.current})
             </button>
             <button
               type="button"
@@ -874,8 +935,8 @@ export function TasksWorkspace() {
               Toutes ({stats.total})
             </button>
             <p className="ml-auto text-xs font-semibold text-slate-500">
-              Les tâches terminées ou dont l’échéance est passée sont conservées
-              automatiquement.
+              Les tâches terminées, échues ou disposant d’un journal sont
+              accessibles dans les archives.
             </p>
           </div>
           <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center">
@@ -1306,33 +1367,46 @@ export function TasksWorkspace() {
               </div>
 
               {editing ? (
+                <section className="mt-5 flex flex-col gap-4 rounded-2xl border border-blue-200 bg-blue-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-wide text-[var(--opc-blue)]">
+                      Avancement de la tâche
+                    </p>
+                    <p className="mt-1 text-2xl font-black text-[var(--opc-ink)]">
+                      {effectiveProgress}%
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Ajoutez une journée sans modifier les informations
+                      générales de la tâche.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openProgressEditor}
+                    className="flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 text-sm font-black text-white"
+                  >
+                    <CirclePlus className="h-4 w-4" />
+                    Ajouter un avancement
+                  </button>
+                </section>
+              ) : null}
+
+              {editing ? (
                 <section className="mt-5 rounded-2xl border border-[var(--opc-border)] bg-slate-50/60 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-black text-[var(--opc-ink)]">Journal d’avancement</h3>
+                      <h3 className="font-black text-[var(--opc-ink)]">
+                        Journal journalier archivé
+                      </h3>
                       <p className="mt-1 text-xs text-slate-500">
-                        Chaque journée, son avancement et ses photos restent archivés et modifiables.
+                        Consultez, modifiez ou supprimez séparément chaque
+                        journée passée et ses photos.
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      {editingProgressUpdateId ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            resetProgressForm(
-                              Number(editing.progress ?? 0),
-                              Number(editing.completed_quantity ?? 0),
-                            )
-                          }
-                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-black text-slate-600 hover:bg-slate-50"
-                        >
-                          Annuler la modification
-                        </button>
-                      ) : null}
-                      <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-[var(--opc-blue)]">
-                        {progressUpdates.length} journée{progressUpdates.length > 1 ? "s" : ""}
-                      </span>
-                    </div>
+                    <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-[var(--opc-blue)]">
+                      {progressUpdates.length} journée
+                      {progressUpdates.length > 1 ? "s" : ""}
+                    </span>
                   </div>
 
                   {editingProgressUpdateId ? (
@@ -1359,16 +1433,44 @@ export function TasksWorkspace() {
                     </div>
                   </div>
 
+                  {progressEditorOpen ? (
+                    <div className="mt-5 rounded-2xl border border-blue-200 bg-white p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="font-black text-[var(--opc-ink)]">
+                            {editingProgressUpdateId
+                              ? "Modifier une journée"
+                              : "Nouvel avancement journalier"}
+                          </h4>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Cette saisie restera archivée comme une journée
+                            indépendante.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            resetProgressForm(
+                              Number(editing.progress ?? 0),
+                              Number(editing.completed_quantity ?? 0),
+                            )
+                          }
+                          className="h-10 shrink-0 rounded-xl border border-[var(--opc-border)] px-3 text-xs font-black text-slate-600 hover:bg-slate-50"
+                        >
+                          Annuler
+                        </button>
+                      </div>
+
                   {form.progress_mode === "building" ? (
                     <div className="mt-4 rounded-2xl border border-blue-100 bg-white p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <h4 className="font-black">
-                            Phases de construction guérite / LT
+                            Étapes de construction guérite / LT
                           </h4>
                           <p className="text-xs text-slate-500">
-                            L’avancement de la tâche est la moyenne pondérée de
-                            ces phases.
+                            L’avancement total est la moyenne des 18 étapes
+                            ci-dessous.
                           </p>
                         </div>
                         <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">
@@ -1380,9 +1482,7 @@ export function TasksWorkspace() {
                           <label key={phase.id} className="block">
                             <span className="flex items-center justify-between gap-3 text-xs font-bold">
                               <span>{phase.label}</span>
-                              <span>
-                                {phase.progress}% · poids {phase.weight}%
-                              </span>
+                              <span>{phase.progress}%</span>
                             </span>
                             <input
                               type="range"
@@ -1407,14 +1507,10 @@ export function TasksWorkspace() {
                           </label>
                         ))}
                       </div>
-                      <button
-                        type="button"
-                        disabled={progressSaving || !buildingPhases.length}
-                        onClick={() => void saveBuildingProgress()}
-                        className="mt-4 flex h-11 w-full items-center justify-center rounded-xl bg-blue-50 px-4 text-center text-sm font-black text-[var(--opc-blue)] disabled:opacity-50"
-                      >
-                        Enregistrer les phases de construction
-                      </button>
+                      <p className="mt-4 rounded-xl bg-blue-50 px-4 py-3 text-xs font-bold leading-relaxed text-[var(--opc-blue)]">
+                        Les 18 étapes et leur moyenne seront archivées avec
+                        l’avancement de la journée.
+                      </p>
                     </div>
                   ) : null}
 
@@ -1423,22 +1519,27 @@ export function TasksWorkspace() {
                       <input type="date" value={progressDate} onChange={(event) => setProgressDate(event.target.value)} className="input" />
                     </Field>
                     {form.progress_mode === "quantity" ? (
-                      <Field
-                        label={`Longueur réalisée — ${progressQuantity} / ${
-                          form.target_quantity ?? 0
-                        } m (${quantityProgress}%)`}
-                      >
-                        <input
-                          type="number"
-                          min={0}
-                          max={form.target_quantity ?? undefined}
-                          step={0.01}
-                          value={progressQuantity}
-                          onChange={(event) =>
-                            setProgressQuantity(Number(event.target.value))
-                          }
-                          className="input"
-                        />
+                      <Field label="Longueur réalisée (m)">
+                        <div className="min-w-0">
+                          <input
+                            type="number"
+                            min={0}
+                            max={form.target_quantity ?? undefined}
+                            step={0.01}
+                            value={progressQuantity}
+                            onChange={(event) =>
+                              setProgressQuantity(Number(event.target.value))
+                            }
+                            className="input"
+                          />
+                          <p
+                            className="mt-2 truncate text-xs font-bold tabular-nums text-slate-500"
+                            title={`${progressQuantity} / ${form.target_quantity ?? 0} m (${quantityProgress}%)`}
+                          >
+                            {progressQuantity} / {form.target_quantity ?? 0} m ·{" "}
+                            {quantityProgress}%
+                          </p>
+                        </div>
                       </Field>
                     ) : form.progress_mode === "building" ? (
                       <Field label={`Avancement calculé — ${buildingProgress}%`}>
@@ -1505,6 +1606,8 @@ export function TasksWorkspace() {
                       ? "Enregistrer les modifications de cette journée"
                       : "Enregistrer l’avancement du jour"}
                   </button>
+                    </div>
+                  ) : null}
 
                   {progressUpdates.length ? (
                     <div className="mt-5 space-y-3">
@@ -1527,6 +1630,15 @@ export function TasksWorkspace() {
                                 title="Modifier cette journée"
                               >
                                 <Edit3 className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setProgressUpdateToDelete(update)}
+                                className="grid h-8 w-8 place-items-center rounded-lg border border-red-200 text-[var(--opc-red)] hover:bg-red-50"
+                                aria-label={`Supprimer la journée du ${update.update_date}`}
+                                title="Supprimer cette journée"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             </div>
                           </div>
@@ -1559,7 +1671,18 @@ export function TasksWorkspace() {
                         </article>
                       ))}
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-white p-6 text-center">
+                      <CalendarClock className="mx-auto h-7 w-7 text-slate-300" />
+                      <p className="mt-3 text-sm font-black text-slate-600">
+                        Aucune journée archivée
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Utilisez « Ajouter un avancement » pour créer la
+                        première journée.
+                      </p>
+                    </div>
+                  )}
                 </section>
               ) : null}
 
@@ -1765,6 +1888,22 @@ export function TasksWorkspace() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmDeleteDialog
+        open={Boolean(progressUpdateToDelete)}
+        title="Supprimer cette journée ?"
+        description="L’avancement journalier et toutes les photos associées seront supprimés. L’avancement actuel de la tâche sera recalculé depuis la journée restante la plus récente."
+        subject={
+          progressUpdateToDelete
+            ? `Journée du ${progressUpdateToDelete.update_date}`
+            : undefined
+        }
+        deleting={progressUpdateDeleting}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setProgressUpdateToDelete(null);
+        }}
+        onConfirm={confirmProgressUpdateDelete}
+      />
 
       <ConfirmDeleteDialog
         open={Boolean(photoToDelete)}
