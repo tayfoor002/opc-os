@@ -1417,7 +1417,7 @@ export function TasksWorkspace() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h3 className="font-black text-[var(--opc-ink)]">
-                        Journal journalier archivé
+                        Historique des avancements
                       </h3>
                       <p className="mt-1 text-xs text-slate-500">
                         Consultez, modifiez ou supprimez séparément chaque
