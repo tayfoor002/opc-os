@@ -170,6 +170,7 @@ export function TasksWorkspace() {
   const [archiveView, setArchiveView] = useState<ArchiveView>("active");
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerMode, setDrawerMode] = useState<"task" | "progress">("task");
   const [editing, setEditing] = useState<Task | null>(null);
   const [form, setForm] = useState<TaskFormValues>(emptyForm);
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
@@ -486,6 +487,7 @@ export function TasksWorkspace() {
   };
 
   function openCreate(activityId = "") {
+    setDrawerMode("task");
     setEditing(null);
     const activity = activities.find((item) => item.id === activityId);
     setForm({
@@ -581,7 +583,8 @@ export function TasksWorkspace() {
     setProgressPhotos([]);
   }
 
-  function openEdit(task: Task) {
+  function openTaskDrawer(task: Task, mode: "task" | "progress") {
+    setDrawerMode(mode);
     setEditing(task);
     setForm({
       title: task.title,
@@ -609,8 +612,22 @@ export function TasksWorkspace() {
       Number(task.progress ?? 0),
       Number(task.completed_quantity ?? 0),
     );
-    void loadTaskProgress(task.id);
+    if (mode === "progress") {
+      setProgressEditorOpen(true);
+      void loadTaskProgress(task.id);
+    } else {
+      setProgressUpdates([]);
+      setBuildingPhases([]);
+    }
     setDrawerOpen(true);
+  }
+
+  function openEdit(task: Task) {
+    openTaskDrawer(task, "task");
+  }
+
+  function openProgressUpdate(task: Task) {
+    openTaskDrawer(task, "progress");
   }
 
   function closeDrawer() {
@@ -1187,6 +1204,16 @@ export function TasksWorkspace() {
                       </td>
                       <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openProgressUpdate(task)}
+                            className="flex h-9 items-center justify-center gap-1.5 rounded-lg bg-blue-50 px-3 text-xs font-black text-[var(--opc-blue)] hover:bg-blue-100"
+                            aria-label={`Ajouter une mise à jour à ${task.title}`}
+                            title="Ajouter une mise à jour d’avancement"
+                          >
+                            <CirclePlus className="h-4 w-4" />
+                            Ajouter MàJ
+                          </button>
                           <button type="button" onClick={() => openEdit(task)} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--opc-border)] text-slate-600 hover:bg-slate-50" aria-label="Modifier">
                             <Edit3 className="h-4 w-4" />
                           </button>
@@ -1213,15 +1240,32 @@ export function TasksWorkspace() {
           <aside className="absolute right-0 top-0 h-full w-full max-w-2xl overflow-y-auto bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="sticky top-0 z-10 flex items-start justify-between border-b border-[var(--opc-border)] bg-white px-6 py-5">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.16em] text-[var(--opc-red)]">{editing ? "Détails de la tâche" : "Création"}</p>
-                <h2 className="mt-2 text-2xl font-black text-[var(--opc-ink)]">{editing ? editing.title : "Nouvelle tâche"}</h2>
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-[var(--opc-red)]">
+                  {drawerMode === "progress"
+                    ? "Mise à jour d’avancement"
+                    : editing
+                      ? "Détails de la tâche"
+                      : "Création"}
+                </p>
+                <h2 className="mt-2 text-2xl font-black text-[var(--opc-ink)]">
+                  {editing ? editing.title : "Nouvelle tâche"}
+                </h2>
               </div>
               <button type="button" onClick={closeDrawer} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[var(--opc-border)] text-slate-500 hover:bg-slate-50">
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <form onSubmit={saveTask} className="p-6">
+            <form
+              onSubmit={
+                drawerMode === "task"
+                  ? saveTask
+                  : (event) => event.preventDefault()
+              }
+              className="p-6"
+            >
+              {drawerMode === "task" ? (
+                <>
               <div className="grid gap-5 md:grid-cols-2">
                 <Field label="Titre">
                   <input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Vérifier le plan EXE" className="input" />
@@ -1365,33 +1409,10 @@ export function TasksWorkspace() {
                   <textarea rows={7} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Détails, résultat attendu, blocage éventuel..." className="input resize-none" />
                 </Field>
               </div>
-
-              {editing ? (
-                <section className="mt-5 flex flex-col gap-4 rounded-2xl border border-blue-200 bg-blue-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-wide text-[var(--opc-blue)]">
-                      Avancement de la tâche
-                    </p>
-                    <p className="mt-1 text-2xl font-black text-[var(--opc-ink)]">
-                      {effectiveProgress}%
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Ajoutez une journée sans modifier les informations
-                      générales de la tâche.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={openProgressEditor}
-                    className="flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 text-sm font-black text-white"
-                  >
-                    <CirclePlus className="h-4 w-4" />
-                    Ajouter un avancement
-                  </button>
-                </section>
+                </>
               ) : null}
 
-              {editing ? (
+              {editing && drawerMode === "progress" ? (
                 <section className="mt-5 rounded-2xl border border-[var(--opc-border)] bg-slate-50/60 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -1403,10 +1424,22 @@ export function TasksWorkspace() {
                         journée passée et ses photos.
                       </p>
                     </div>
-                    <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-[var(--opc-blue)]">
-                      {progressUpdates.length} journée
-                      {progressUpdates.length > 1 ? "s" : ""}
-                    </span>
+                    <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+                      <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-[var(--opc-blue)]">
+                        {progressUpdates.length} journée
+                        {progressUpdates.length > 1 ? "s" : ""}
+                      </span>
+                      {!progressEditorOpen ? (
+                        <button
+                          type="button"
+                          onClick={openProgressEditor}
+                          className="flex h-9 items-center justify-center gap-1.5 rounded-lg bg-[var(--opc-blue)] px-3 text-xs font-black text-white"
+                        >
+                          <CirclePlus className="h-4 w-4" />
+                          Ajouter MàJ
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
 
                   {editingProgressUpdateId ? (
@@ -1440,7 +1473,7 @@ export function TasksWorkspace() {
                           <h4 className="font-black text-[var(--opc-ink)]">
                             {editingProgressUpdateId
                               ? "Modifier une journée"
-                              : "Nouvel avancement journalier"}
+                              : "Ajouter une mise à jour"}
                           </h4>
                           <p className="mt-1 text-xs text-slate-500">
                             Cette saisie restera archivée comme une journée
@@ -1678,7 +1711,7 @@ export function TasksWorkspace() {
                         Aucune journée archivée
                       </p>
                       <p className="mt-1 text-xs text-slate-400">
-                        Utilisez « Ajouter un avancement » pour créer la
+                        Utilisez « Ajouter MàJ » pour créer la
                         première journée.
                       </p>
                     </div>
@@ -1686,6 +1719,8 @@ export function TasksWorkspace() {
                 </section>
               ) : null}
 
+              {drawerMode === "task" ? (
+                <>
               <div className="mt-5">
                 {editing && projectId ? (
                   <TaskPrerequisitesPanel
@@ -1800,6 +1835,8 @@ export function TasksWorkspace() {
                   </button>
                 </div>
               </div>
+                </>
+              ) : null}
             </form>
           </aside>
         </div>
