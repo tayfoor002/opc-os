@@ -64,8 +64,10 @@ export function DocumentMetadataSync({ documentIds }: Props) {
             type: "application/pdf",
           }),
         );
-        const reference = inference.values.reference?.trim();
+        const detectedReference = inference.values.reference?.trim();
         const revision = inference.values.revision?.trim();
+        const reference =
+          document.reference?.trim() || detectedReference;
         if (!reference || !revision) {
           return "skipped" as const;
         }
