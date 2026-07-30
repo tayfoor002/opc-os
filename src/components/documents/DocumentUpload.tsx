@@ -238,19 +238,36 @@ export function DocumentUpload({
     );
 
     startSaving(async () => {
-      const results = await Promise.all(
-        readyItems.map(async (item) => {
-          const formData = new FormData();
-          Object.entries(item.values).forEach(([key, value]) => {
-            formData.set(key, value);
-          });
-          formData.set("file", item.file);
-          return {
-            id: item.id,
-            result: await uploadDocument(formData),
-          };
-        }),
-      );
+      const results: Array<{
+        id: string;
+        result: Awaited<ReturnType<typeof uploadDocument>>;
+      }> = [];
+      const orderedItems = readyItems.slice().sort((left, right) => {
+        const referenceOrder = left.values.reference.localeCompare(
+          right.values.reference,
+          "fr",
+        );
+        if (referenceOrder) {
+          return referenceOrder;
+        }
+        return left.values.revision.localeCompare(
+          right.values.revision,
+          "fr",
+          { numeric: true },
+        );
+      });
+
+      for (const item of orderedItems) {
+        const formData = new FormData();
+        Object.entries(item.values).forEach(([key, value]) => {
+          formData.set(key, value);
+        });
+        formData.set("file", item.file);
+        results.push({
+          id: item.id,
+          result: await uploadDocument(formData),
+        });
+      }
 
       const successfulIds = new Set(
         results

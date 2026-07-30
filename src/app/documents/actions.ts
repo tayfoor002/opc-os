@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getDocumentRelationOptions } from "@/lib/documents/queries";
+import { comparePdfVersions } from "@/lib/documents/pdf-version-comparison";
 import { getDocumentStoragePathCandidates } from "@/lib/documents/storage";
 import type {
   DocumentActionResult,
@@ -75,6 +76,71 @@ function safeFileName(fileName: string): string {
     .replace(/[^a-zA-Z0-9._-]/g, "-");
 }
 
+function normalizeDocumentReference(value: string | null): string {
+  return (value ?? "")
+    .normalize("NFKC")
+    .toLocaleUpperCase("fr")
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function revisionRank(value: string | null): number | null {
+  const matches = (value ?? "").match(/\d+(?:[.,]\d+)?/g);
+  if (!matches?.length) {
+    return null;
+  }
+  const parsed = Number(matches.at(-1)?.replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+type ExistingDocumentVersion = {
+  id: string;
+  reference: string | null;
+  revision: string | null;
+  file_url: string | null;
+};
+
+async function transferDocumentRelations(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  previousIds: string[],
+  nextId: string,
+): Promise<string | null> {
+  const { data: taskLinks, error: taskLinksError } = await supabase
+    .from("task_documents")
+    .select("task_id")
+    .in("document_id", previousIds);
+  if (taskLinksError) {
+    return taskLinksError.message;
+  }
+  if (taskLinks?.length) {
+    const { error } = await supabase.from("task_documents").upsert(
+      taskLinks.map(({ task_id }) => ({
+        task_id,
+        document_id: nextId,
+      })),
+      { onConflict: "task_id,document_id", ignoreDuplicates: true },
+    );
+    if (error) {
+      return error.message;
+    }
+  }
+
+  for (const table of [
+    "task_document_requirements",
+    "photos",
+    "reservations",
+  ] as const) {
+    const { error } = await supabase
+      .from(table)
+      .update({ document_id: nextId })
+      .in("document_id", previousIds);
+    if (error) {
+      return error.message;
+    }
+  }
+
+  return null;
+}
+
 export async function uploadDocument(
   formData: FormData,
 ): Promise<DocumentActionResult> {
@@ -122,6 +188,104 @@ export async function uploadDocument(
     };
   }
 
+  const normalizedReference = normalizeDocumentReference(values.reference);
+  const nextRevisionRank = revisionRank(values.revision);
+  let olderVersions: ExistingDocumentVersion[] = [];
+  let comparisonSummary: string | null = null;
+
+  if (normalizedReference && nextRevisionRank !== null) {
+    const { data: projectDocuments, error: versionsError } = await supabase
+      .from("documents")
+      .select("id, reference, revision, file_url")
+      .eq("project_id", values.project_id)
+      .not("reference", "is", null);
+
+    if (versionsError) {
+      return {
+        success: false,
+        error: `Impossible de vérifier les versions existantes : ${versionsError.message}`,
+      };
+    }
+
+    const sameReference = (projectDocuments ?? []).filter(
+      (document) =>
+        normalizeDocumentReference(document.reference) === normalizedReference,
+    );
+    const blockingVersion = sameReference.find((document) => {
+      const rank = revisionRank(document.revision);
+      return rank !== null && rank >= nextRevisionRank;
+    });
+
+    if (blockingVersion) {
+      return {
+        success: false,
+        error:
+          revisionRank(blockingVersion.revision) === nextRevisionRank
+            ? `La révision ${values.revision} existe déjà pour cette référence.`
+            : `Une révision plus récente (${blockingVersion.revision}) existe déjà. Aucun document n’a été supprimé.`,
+      };
+    }
+
+    olderVersions = sameReference.filter((document) => {
+      const rank = revisionRank(document.revision);
+      return rank !== null && rank < nextRevisionRank;
+    });
+    const latestOlderVersion = olderVersions
+      .slice()
+      .sort(
+        (left, right) =>
+          (revisionRank(right.revision) ?? -1) -
+          (revisionRank(left.revision) ?? -1),
+      )[0];
+
+    if (latestOlderVersion) {
+      if (!latestOlderVersion.file_url) {
+        return {
+          success: false,
+          error:
+            "L’ancienne version ne contient aucun PDF. Elle a été conservée et le remplacement a été annulé.",
+        };
+      }
+      const previousStorage = supabase.storage.from("documents");
+      let previousFile: Blob | null = null;
+      let downloadDetail = "fichier indisponible";
+      for (const candidate of getDocumentStoragePathCandidates(
+        latestOlderVersion.file_url,
+      )) {
+        const result = await previousStorage.download(candidate);
+        if (!result.error && result.data) {
+          previousFile = result.data;
+          break;
+        }
+        downloadDetail = result.error?.message ?? downloadDetail;
+      }
+      if (!previousFile) {
+        return {
+          success: false,
+          error:
+            "Impossible de comparer l’ancienne version avant sa suppression. " +
+            `Elle a été conservée. Détail : ${downloadDetail}`,
+        };
+      }
+
+      try {
+        comparisonSummary = await comparePdfVersions({
+          previousBytes: new Uint8Array(await previousFile.arrayBuffer()),
+          nextFile: file,
+          previousRevision: latestOlderVersion.revision,
+          nextRevision: values.revision,
+        });
+      } catch (error) {
+        return {
+          success: false,
+          error:
+            "La comparaison des deux PDF a échoué. L’ancienne version a été conservée et aucun remplacement n’a été effectué. " +
+            (error instanceof Error ? error.message : ""),
+        };
+      }
+    }
+  }
+
   const documentId = crypto.randomUUID();
   const storagePath = `${values.project_id}/${documentId}/${safeFileName(
     file.name,
@@ -153,9 +317,14 @@ export async function uploadDocument(
     };
   }
 
+  const comments = [values.comments, comparisonSummary]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 4000) || null;
   const { error: insertError } = await supabase.from("documents").insert({
     id: documentId,
     ...values,
+    comments,
     file_url: storagePath,
   });
 
@@ -165,6 +334,52 @@ export async function uploadDocument(
       success: false,
       error: `Erreur d’enregistrement : ${insertError.message}`,
     };
+  }
+
+  if (olderVersions.length) {
+    const previousIds = olderVersions.map(({ id }) => id);
+    const relationError = await transferDocumentRelations(
+      supabase,
+      previousIds,
+      documentId,
+    );
+    if (relationError) {
+      await supabase.from("documents").delete().eq("id", documentId);
+      await storage.remove([storagePath]);
+      return {
+        success: false,
+        error:
+          "La nouvelle version n’a pas remplacé l’ancienne car ses liaisons n’ont pas pu être transférées. " +
+          relationError,
+      };
+    }
+
+    const { error: deleteError } = await supabase
+      .from("documents")
+      .delete()
+      .in("id", previousIds);
+    if (deleteError) {
+      return {
+        success: false,
+        error:
+          "La nouvelle version est enregistrée, mais l’ancienne n’a pas pu être supprimée : " +
+          deleteError.message,
+      };
+    }
+    for (const oldVersion of olderVersions) {
+      if (!oldVersion.file_url) {
+        continue;
+      }
+      for (const candidate of getDocumentStoragePathCandidates(
+        oldVersion.file_url,
+      )) {
+        const signed = await storage.createSignedUrl(candidate, 30);
+        if (!signed.error && signed.data) {
+          await storage.remove([candidate]);
+          break;
+        }
+      }
+    }
   }
 
   revalidatePath("/documents");
