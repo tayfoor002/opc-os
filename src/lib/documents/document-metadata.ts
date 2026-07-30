@@ -4,6 +4,7 @@ export type DocumentMetadataInference = {
   values: Partial<DocumentEditValues>;
   detectedFields: string[];
   warning: string | null;
+  titleDetectedFromCover: boolean;
 };
 
 type PdfInfo = {
@@ -12,6 +13,22 @@ type PdfInfo = {
   Author?: string;
   CreationDate?: string;
   ModDate?: string;
+};
+
+type PositionedPdfText = {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type PdfTextRow = {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 function normalizeSearch(value: string) {
@@ -98,6 +115,158 @@ function findRevision(value: string) {
   return /^\d+$/.test(raw)
     ? `V${Number(raw).toString().padStart(2, "0")}`
     : raw;
+}
+
+function revisionRank(value: string) {
+  const match = value.match(/\d+(?:[.,]\d+)?/);
+  return match ? Number(match[0].replace(",", ".")) : -1;
+}
+
+function revisionFromHistoryRow(value: string, reference: string) {
+  const explicit = findRevision(value);
+  if (explicit) return explicit;
+  const remainder = value
+    .replace(referencePrefixPattern(reference), "")
+    .replace(/^[\s:|_-]+/, "")
+    .trim();
+  const bare = remainder.match(/^(?:V\s*)?0*(\d{1,3})$|^([A-Z])$/i);
+  if (!bare) return "";
+  return bare[1]
+    ? `V${Number(bare[1]).toString().padStart(2, "0")}`
+    : bare[2].toUpperCase();
+}
+
+function groupPositionedText(items: PositionedPdfText[]): PdfTextRow[] {
+  const rows: Array<{ y: number; items: PositionedPdfText[] }> = [];
+
+  for (const item of items.filter(({ text }) => text.trim())) {
+    const row = rows.find(({ y }) => Math.abs(y - item.y) <= 3);
+    if (row) {
+      row.items.push(item);
+      row.y =
+        row.items.reduce((sum, current) => sum + current.y, 0) /
+        row.items.length;
+    } else {
+      rows.push({ y: item.y, items: [item] });
+    }
+  }
+
+  return rows
+    .map((row) => {
+      const sorted = row.items.slice().sort((left, right) => left.x - right.x);
+      const first = sorted[0];
+      const last = sorted.at(-1)!;
+      return {
+        text: sorted
+          .map(({ text }) => text.trim())
+          .filter(Boolean)
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim(),
+        x: first.x,
+        y: row.y,
+        width: last.x + last.width - first.x,
+        height: Math.max(...sorted.map(({ height }) => height)),
+      };
+    })
+    .sort((left, right) => right.y - left.y);
+}
+
+function metadataFromModificationHistory(rows: PdfTextRow[]) {
+  const historyIndex = rows.findIndex((row) =>
+    normalizeSearch(row.text).includes("HISTORIQUE DE MODIFICATION"),
+  );
+  if (historyIndex < 0) {
+    return { reference: "", revision: "" };
+  }
+
+  const historyHeading = rows[historyIndex];
+  const candidates = rows
+    .filter(
+      (row) =>
+        row.y < historyHeading.y - 2 &&
+        row.y >= historyHeading.y - 260,
+    )
+    .map((row) => {
+      const reference = findReference(row.text);
+      if (!reference) return null;
+      let revision = revisionFromHistoryRow(row.text, reference);
+      if (!revision) {
+        const nearbyText = rows
+          .filter(
+            (candidate) =>
+              Math.abs(candidate.y - row.y) <= 8 &&
+              candidate.x > row.x,
+          )
+          .map((candidate) => candidate.text)
+          .join(" ");
+        revision = findRevision(nearbyText);
+      }
+      return { reference, revision, y: row.y };
+    })
+    .filter(
+      (
+        candidate,
+      ): candidate is { reference: string; revision: string; y: number } =>
+        Boolean(candidate),
+    )
+    .sort((left, right) => {
+      const revisionOrder =
+        revisionRank(right.revision) - revisionRank(left.revision);
+      return revisionOrder || right.y - left.y;
+    });
+
+  return candidates[0] ?? { reference: "", revision: "" };
+}
+
+function titleFromCover(
+  rows: PdfTextRow[],
+  pageWidth: number,
+  pageHeight: number,
+  reference: string,
+  revision: string,
+) {
+  const excluded =
+    /HISTORIQUE DE MODIFICATION|REFERENCE|R[ÉE]VISION|VERSION|ALSTOM|AVANZIT|ONCF|PAGE\s+\d/i;
+  const candidates = rows.filter((row) => {
+    const normalized = normalizeSearch(row.text);
+    const center = row.x + row.width / 2;
+    return (
+      row.text.length >= 5 &&
+      row.text.length <= 260 &&
+      row.y >= pageHeight * 0.2 &&
+      row.y <= pageHeight * 0.78 &&
+      Math.abs(center - pageWidth / 2) <= pageWidth * 0.32 &&
+      !excluded.test(normalized) &&
+      !findReference(row.text)
+    );
+  });
+  if (!candidates.length) return "";
+
+  const largestHeight = Math.max(...candidates.map(({ height }) => height));
+  const prominent = candidates.filter(
+    ({ height }) => height >= Math.max(10, largestHeight * 0.68),
+  );
+  const anchor = prominent
+    .slice()
+    .sort((left, right) => {
+      const leftCenter = left.x + left.width / 2;
+      const rightCenter = right.x + right.width / 2;
+      const leftScore =
+        left.height * 4 - Math.abs(leftCenter - pageWidth / 2) / 20;
+      const rightScore =
+        right.height * 4 - Math.abs(rightCenter - pageWidth / 2) / 20;
+      return rightScore - leftScore;
+    })[0];
+  const titleRows = prominent
+    .filter(
+      (row) =>
+        Math.abs(row.y - anchor.y) <= Math.max(70, anchor.height * 4.5),
+    )
+    .sort((left, right) => right.y - left.y);
+  const title = titleRows.map(({ text }) => text).join(" ");
+
+  return separateTitle(title, reference, revision);
 }
 
 function usefulPdfTitle(value: string | undefined) {
@@ -230,16 +399,21 @@ function dateFromText(text: string) {
 
 async function readPdf(file: File) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
-    import.meta.url,
-  ).toString();
+  if (typeof window !== "undefined") {
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+      import.meta.url,
+    ).toString();
+  }
 
   const document = await pdfjs.getDocument({
     data: new Uint8Array(await file.arrayBuffer()),
   }).promise;
   const metadata = await document.getMetadata().catch(() => null);
   const pages: string[] = [];
+  let firstPageItems: PositionedPdfText[] = [];
+  let firstPageWidth = 0;
+  let firstPageHeight = 0;
 
   for (
     let pageNumber = 1;
@@ -248,6 +422,20 @@ async function readPdf(file: File) {
   ) {
     const page = await document.getPage(pageNumber);
     const content = await page.getTextContent();
+    if (pageNumber === 1) {
+      const viewport = page.getViewport({ scale: 1 });
+      firstPageWidth = viewport.width;
+      firstPageHeight = viewport.height;
+      firstPageItems = content.items
+        .filter((item) => "str" in item)
+        .map((item) => ({
+          text: item.str,
+          x: item.transform[4],
+          y: item.transform[5],
+          width: item.width,
+          height: item.height,
+        }));
+    }
     let pageText = "";
     for (const item of content.items) {
       if (!("str" in item)) continue;
@@ -260,6 +448,9 @@ async function readPdf(file: File) {
   return {
     text: pages.join("\n"),
     info: (metadata?.info ?? {}) as PdfInfo,
+    firstPageRows: groupPositionedText(firstPageItems),
+    firstPageWidth,
+    firstPageHeight,
   };
 }
 
@@ -269,12 +460,18 @@ export async function inferDocumentMetadata(
   const fileStem = cleanFileStem(file.name);
   let pdfText = "";
   let pdfInfo: PdfInfo = {};
+  let firstPageRows: PdfTextRow[] = [];
+  let firstPageWidth = 0;
+  let firstPageHeight = 0;
   let warning: string | null = null;
 
   try {
     const pdf = await readPdf(file);
     pdfText = pdf.text;
     pdfInfo = pdf.info;
+    firstPageRows = pdf.firstPageRows;
+    firstPageWidth = pdf.firstPageWidth;
+    firstPageHeight = pdf.firstPageHeight;
   } catch {
     warning =
       "Le texte interne du PDF n’a pas pu être lu. Les informations ont été déduites depuis le nom du fichier.";
@@ -283,10 +480,19 @@ export async function inferDocumentMetadata(
   const source = `${fileStem}\n${pdfInfo.Title ?? ""}\n${
     pdfInfo.Subject ?? ""
   }\n${pdfText}`;
-  const reference = findReference(source);
-  const revision = findRevision(source);
+  const historyMetadata = metadataFromModificationHistory(firstPageRows);
+  const reference = historyMetadata.reference || findReference(source);
+  const revision = historyMetadata.revision || findRevision(source);
   const documentType = inferDocumentType(reference, source);
+  const coverTitle = titleFromCover(
+    firstPageRows,
+    firstPageWidth,
+    firstPageHeight,
+    reference,
+    revision,
+  );
   const title =
+    coverTitle ||
     usefulPdfTitle(pdfInfo.Title) ||
     titleFromText(pdfText) ||
     titleFromFileName(file.name, reference, revision);
@@ -354,5 +560,6 @@ export async function inferDocumentMetadata(
       .filter(([, value]) => Boolean(value))
       .map(([key]) => labels[key]),
     warning,
+    titleDetectedFromCover: Boolean(coverTitle),
   };
 }

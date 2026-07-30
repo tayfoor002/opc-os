@@ -407,6 +407,75 @@ export async function loadDocumentRelationOptions(
   }
 }
 
+export async function findProcedureRegisterTitle(
+  projectId: string,
+  reference: string,
+): Promise<
+  | { success: true; title: string | null }
+  | { success: false; error: string }
+> {
+  if (
+    !documentIdSchema.safeParse(projectId).success ||
+    !reference.trim()
+  ) {
+    return { success: false, error: "Projet ou référence invalide." };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("procedure_register_imports")
+    .select("headers,rows")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    return { success: false, error: error.message };
+  }
+  if (!data) {
+    return { success: true, title: null };
+  }
+
+  const normalize = (value: string) =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("fr")
+      .replace(/[^a-z0-9]/g, "");
+  const headers = Array.isArray(data.headers)
+    ? data.headers.filter((header): header is string => typeof header === "string")
+    : [];
+  const referenceHeader = headers.find((header) => {
+    const key = normalize(header);
+    return key.includes("ref") && key.includes("groupement");
+  });
+  const titleHeader = headers.find((header) => normalize(header) === "titre");
+  if (!referenceHeader || !titleHeader || !Array.isArray(data.rows)) {
+    return { success: true, title: null };
+  }
+
+  const expectedReference = normalizeDocumentReference(reference);
+  for (const rawRow of data.rows) {
+    if (!rawRow || typeof rawRow !== "object" || !("values" in rawRow)) {
+      continue;
+    }
+    const values = rawRow.values;
+    if (!values || typeof values !== "object") {
+      continue;
+    }
+    const record = values as Record<string, unknown>;
+    if (
+      normalizeDocumentReference(String(record[referenceHeader] ?? "")) ===
+      expectedReference
+    ) {
+      const title = String(record[titleHeader] ?? "").trim();
+      return { success: true, title: title || null };
+    }
+  }
+
+  return { success: true, title: null };
+}
+
 async function validateRelatedEntity(
   table: "zones" | "phases" | "activities",
   id: string | null,

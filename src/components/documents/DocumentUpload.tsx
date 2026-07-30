@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import {
+  findProcedureRegisterTitle,
   loadDocumentRelationOptions,
   uploadDocument,
 } from "@/app/documents/actions";
@@ -168,6 +169,25 @@ export function DocumentUpload({
       await Promise.all(
         newItems.map(async (item) => {
           const inference = await inferDocumentMetadata(item.file);
+          if (
+            !inference.titleDetectedFromCover &&
+            context.values.project_id &&
+            inference.values.reference
+          ) {
+            const registerMatch = await findProcedureRegisterTitle(
+              context.values.project_id,
+              inference.values.reference,
+            );
+            if (registerMatch.success && registerMatch.title) {
+              inference.values.title = registerMatch.title;
+              inference.detectedFields = [
+                ...new Set([...inference.detectedFields, "titre"]),
+              ];
+              inference.warning = inference.warning
+                ? `${inference.warning} Le titre a été confirmé dans le tableau de suivi des procédures.`
+                : "Le titre a été confirmé depuis la référence exacte du tableau de suivi des procédures.";
+            }
+          }
           setItems((current) =>
             current.map((currentItem) =>
               currentItem.id === item.id
