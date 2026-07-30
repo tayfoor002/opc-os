@@ -1945,7 +1945,12 @@ function MeetingPreview({
                   {table.title || "Tableau"}
                 </h4>
                 <div className="overflow-x-auto rounded-xl border border-[var(--opc-border)]">
-                  <table className="w-full table-fixed border-collapse text-left text-xs">
+                  <table
+                    className="min-w-full border-collapse text-left text-xs"
+                    style={{
+                      width: `${Math.max(100, table.columns.length * 18)}%`,
+                    }}
+                  >
                     <thead className="bg-slate-100">
                       <tr>
                         {table.columns.map((column, index) => (

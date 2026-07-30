@@ -67,6 +67,7 @@ export async function downloadMeetingWord(
     HeadingLevel,
     ImageRun,
     Packer,
+    PageOrientation,
     Paragraph,
     ShadingType,
     Table,
@@ -235,12 +236,22 @@ export async function downloadMeetingWord(
   }
   const observationsSectionNumber = nextSectionNumber;
   const validationSectionNumber = nextSectionNumber + 1;
+  const useLandscape = meeting.custom_tables.some(
+    (table) => table.columns.length > 6,
+  );
 
   const document = new Document({
     sections: [
       {
         properties: {
           page: {
+            size: {
+              orientation: useLandscape
+                ? PageOrientation.LANDSCAPE
+                : PageOrientation.PORTRAIT,
+              width: useLandscape ? 16838 : 11906,
+              height: useLandscape ? 11906 : 16838,
+            },
             margin: { top: 720, right: 720, bottom: 720, left: 720 },
           },
         },

@@ -1,9 +1,6 @@
 import type { MeetingCustomTable } from "@/types/meeting";
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
-const MAX_SHEET_ROWS = 500;
-const MAX_SHEET_COLUMNS = 40;
-const REPORT_COLUMNS_PER_TABLE = 6;
 
 type ExcelImportResult = {
   tables: MeetingCustomTable[];
@@ -21,17 +18,42 @@ function isEmpty(value: string) {
 }
 
 function normalizeMatrix(rawRows: unknown[][]): string[][] {
-  const rows = rawRows
-    .map((row) => row.map(cellText))
-    .filter((row) => row.some((cell) => !isEmpty(cell)));
-  if (!rows.length) return [];
+  const rows = rawRows.map((row) => row.map(cellText));
+  const firstDataRow = rows.findIndex((row) =>
+    row.some((cell) => !isEmpty(cell)),
+  );
+  if (firstDataRow < 0) return [];
+  let lastDataRow = rows.length - 1;
+  while (
+    lastDataRow > firstDataRow &&
+    !rows[lastDataRow].some((cell) => !isEmpty(cell))
+  ) {
+    lastDataRow -= 1;
+  }
 
-  const maximumColumns = Math.max(...rows.map((row) => row.length));
-  const activeColumns = Array.from({ length: maximumColumns }, (_, index) =>
-    rows.some((row) => !isEmpty(row[index] ?? "")) ? index : -1,
-  ).filter((index) => index >= 0);
+  const usedRows = rows.slice(firstDataRow, lastDataRow + 1);
+  const maximumColumns = Math.max(...usedRows.map((row) => row.length));
+  let firstDataColumn = 0;
+  while (
+    firstDataColumn < maximumColumns &&
+    !usedRows.some((row) => !isEmpty(row[firstDataColumn] ?? ""))
+  ) {
+    firstDataColumn += 1;
+  }
+  let lastDataColumn = maximumColumns - 1;
+  while (
+    lastDataColumn > firstDataColumn &&
+    !usedRows.some((row) => !isEmpty(row[lastDataColumn] ?? ""))
+  ) {
+    lastDataColumn -= 1;
+  }
 
-  return rows.map((row) => activeColumns.map((index) => row[index] ?? ""));
+  return usedRows.map((row) =>
+    Array.from(
+      { length: lastDataColumn - firstDataColumn + 1 },
+      (_, offset) => row[firstDataColumn + offset] ?? "",
+    ),
+  );
 }
 
 function uniqueHeaders(row: string[]): string[] {
@@ -42,59 +64,6 @@ function uniqueHeaders(row: string[]): string[] {
     occurrences.set(base.toLowerCase(), count);
     return count === 1 ? base : `${base} (${count})`;
   });
-}
-
-function splitWideTable(
-  fileName: string,
-  sheetName: string,
-  title: string,
-  columns: string[],
-  rows: string[][],
-): MeetingCustomTable[] {
-  if (columns.length <= REPORT_COLUMNS_PER_TABLE) {
-    return [
-      {
-        id: crypto.randomUUID(),
-        title,
-        columns,
-        rows,
-        source: "excel",
-        source_file: fileName,
-        source_sheet: sheetName,
-      },
-    ];
-  }
-
-  const tables: MeetingCustomTable[] = [];
-  const dataColumnsPerPart = REPORT_COLUMNS_PER_TABLE - 1;
-  const parts = Math.ceil((columns.length - 1) / dataColumnsPerPart);
-
-  for (let part = 0; part < parts; part += 1) {
-    const start = 1 + part * dataColumnsPerPart;
-    const indexes = [
-      0,
-      ...Array.from(
-        {
-          length: Math.min(
-            dataColumnsPerPart,
-            Math.max(0, columns.length - start),
-          ),
-        },
-        (_, offset) => start + offset,
-      ),
-    ];
-    tables.push({
-      id: crypto.randomUUID(),
-      title: `${title} — partie ${part + 1}/${parts}`,
-      columns: indexes.map((index) => columns[index]),
-      rows: rows.map((row) => indexes.map((index) => row[index] ?? "")),
-      source: "excel",
-      source_file: fileName,
-      source_sheet: sheetName,
-    });
-  }
-
-  return tables;
 }
 
 export async function importMeetingTablesFromExcel(
@@ -124,20 +93,10 @@ export async function importMeetingTablesFromExcel(
       header: 1,
       defval: "",
       raw: false,
-      blankrows: false,
+      blankrows: true,
     });
     let rows = normalizeMatrix(rawRows);
     if (!rows.length) continue;
-    if (rows.length > MAX_SHEET_ROWS) {
-      throw new Error(
-        `La feuille « ${sheetName} » contient plus de ${MAX_SHEET_ROWS} lignes utiles. Réduisez-la avant l’import dans un CR.`,
-      );
-    }
-    if (rows[0].length > MAX_SHEET_COLUMNS) {
-      throw new Error(
-        `La feuille « ${sheetName} » contient plus de ${MAX_SHEET_COLUMNS} colonnes utiles. Réduisez-la avant l’import dans un CR.`,
-      );
-    }
 
     let tableTitle = sheetName;
     const firstRowValues = rows[0].filter((cell) => !isEmpty(cell));
@@ -153,23 +112,22 @@ export async function importMeetingTablesFromExcel(
       .slice(1)
       .map((row) =>
         Array.from({ length: columns.length }, (_, index) => row[index] ?? ""),
-      )
-      .filter((row) => row.some((cell) => !isEmpty(cell)));
+      );
 
-    if (!dataRows.length) {
+    if (!dataRows.some((row) => row.some((cell) => !isEmpty(cell)))) {
       warnings.push(`« ${sheetName} » ne contient aucune ligne de données.`);
       continue;
     }
 
-    tables.push(
-      ...splitWideTable(
-        file.name,
-        sheetName,
-        tableTitle,
-        columns,
-        dataRows,
-      ),
-    );
+    tables.push({
+      id: crypto.randomUUID(),
+      title: tableTitle,
+      columns,
+      rows: dataRows,
+      source: "excel",
+      source_file: file.name,
+      source_sheet: sheetName,
+    });
     importedSheets += 1;
   }
 
