@@ -25,10 +25,10 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { downloadReportPdf } from "@/lib/reporting/exports";
 import { importMeetingTablesFromExcel } from "@/lib/meetings/excel-import";
+import { downloadMeetingPdf } from "@/lib/meetings/pdf-export";
 import { downloadMeetingWord } from "@/lib/meetings/word-export";
 import { createClient } from "@/lib/supabase/client";
 import type { CollaboratorOption } from "@/types/organization";
@@ -125,7 +125,6 @@ function safeStorageFileName(value: string) {
 
 export function MeetingsWorkspace() {
   const supabase = useMemo(() => createClient(), []);
-  const previewRef = useRef<HTMLElement | null>(null);
   const [projectId, setProjectId] = useState("");
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
   const [meetings, setMeetings] = useState<MeetingMinute[]>([]);
@@ -672,14 +671,14 @@ export function MeetingsWorkspace() {
   }
 
   async function exportPdf() {
-    if (!previewRef.current) return;
     setExporting("pdf");
     setError("");
     setExportError("");
     try {
-      await downloadReportPdf(
-        previewRef.current,
+      await downloadMeetingPdf(
+        currentMeeting,
         `cr-${cleanFileName(form.title || "reunion")}-${form.meeting_date}.pdf`,
+        showOncfLogo,
       );
     } catch (exportError) {
       const message =
@@ -1619,7 +1618,6 @@ export function MeetingsWorkspace() {
             ) : null}
             <MeetingPreview
               meeting={currentMeeting}
-              previewRef={previewRef}
               showOncfLogo={showOncfLogo}
             />
           </div>
@@ -1773,16 +1771,13 @@ export function MeetingsWorkspace() {
 
 function MeetingPreview({
   meeting,
-  previewRef,
   showOncfLogo,
 }: {
   meeting: MeetingMinute;
-  previewRef: React.RefObject<HTMLElement | null>;
   showOncfLogo: boolean;
 }) {
   return (
     <article
-      ref={previewRef}
       className="overflow-hidden rounded-2xl border border-[var(--opc-border)] bg-white shadow-lg"
     >
       <header className="grid min-h-28 grid-cols-[150px_1fr_150px] items-center gap-4 bg-[var(--opc-red)] px-5 py-4 text-white">
