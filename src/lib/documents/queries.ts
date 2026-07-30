@@ -9,6 +9,7 @@ import type {
 
 export type DocumentListItem = {
   id: string;
+  project_id: string;
   reference: string | null;
   title: string;
   revision: string | null;
@@ -56,7 +57,7 @@ export type DocumentAccess = {
 };
 
 const DOCUMENT_COLUMNS =
-  "id, reference, title, revision, status, category, document_type, document_subcategory, execution_status, created_at";
+  "id, project_id, reference, title, revision, status, category, document_type, document_subcategory, execution_status, created_at";
 
 const DOCUMENT_DETAILS_COLUMNS = `
   id,

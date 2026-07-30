@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { FileSpreadsheet, FolderOpen, Search } from "lucide-react";
 
 import { DocumentToolbar } from "./DocumentToolbar";
 import { DocumentTable } from "./DocumentTable";
 import { DocumentUpload } from "./DocumentUpload";
+import { ProcedureRegister } from "./ProcedureRegister";
 
 import {
   Dialog,
@@ -28,6 +29,7 @@ type Props = {
 
 export function DocumentsView({ documents, projects }: Props) {
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState<"library" | "procedure-register">("library");
   const [typeFilter, setTypeFilter] = useState("all");
   const [subcategoryFilter, setSubcategoryFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -57,6 +59,37 @@ export function DocumentsView({ documents, projects }: Props) {
     <>
       <DocumentToolbar onCreate={() => setOpen(true)} />
 
+      <div className="mb-5 inline-flex rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+        <button
+          type="button"
+          onClick={() => setView("library")}
+          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black ${
+            view === "library"
+              ? "bg-[var(--opc-blue)] text-white"
+              : "text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <FolderOpen className="h-4 w-4" />
+          Bibliothèque
+        </button>
+        <button
+          type="button"
+          onClick={() => setView("procedure-register")}
+          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black ${
+            view === "procedure-register"
+              ? "bg-emerald-600 text-white"
+              : "text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <FileSpreadsheet className="h-4 w-4" />
+          Suivi des procédures
+        </button>
+      </div>
+
+      {view === "procedure-register" ? (
+        <ProcedureRegister documents={documents} projects={projects} />
+      ) : (
+        <>
       <section className="mb-5 rounded-2xl border border-[var(--opc-border)] bg-white p-4 shadow-sm">
         <div className="flex flex-wrap gap-2">
           {[
@@ -136,6 +169,8 @@ export function DocumentsView({ documents, projects }: Props) {
         documents={filteredDocuments}
         allDocuments={documents}
       />
+        </>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
