@@ -784,7 +784,7 @@ export function ReportingWorkspace() {
                 </p>
               ) : null}
               <p className="text-sm font-black uppercase tracking-[0.13em]">
-                MARCHÉ N° 625C07 PDD
+                MARCHÉ N° 625C07
               </p>
               <p className="mt-2 text-lg font-black uppercase leading-tight">
                 PROGRAMME DE DÉVELOPPEMENT

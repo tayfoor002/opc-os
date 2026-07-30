@@ -1153,7 +1153,7 @@ function MeetingPreview({
             </p>
           ) : null}
           <p className="text-xs font-black uppercase tracking-[0.12em]">
-            MARCHÉ N° 625C07 PDD
+            MARCHÉ N° 625C07
           </p>
           <p className="mt-2 text-base font-black uppercase">
             PROGRAMME DE DÉVELOPPEMENT

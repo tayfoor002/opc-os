@@ -106,7 +106,7 @@ export async function downloadMeetingWord(
                         children: [
                           new TextRun({
                             text:
-                              "ALSTOM     MARCHÉ N° 625C07 PDD — PROGRAMME DE DÉVELOPPEMENT     AVANZIT",
+                              "ALSTOM     MARCHÉ N° 625C07 — PROGRAMME DE DÉVELOPPEMENT     AVANZIT",
                             bold: true,
                             color: "FFFFFF",
                             size: 20,

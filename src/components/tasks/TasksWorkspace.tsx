@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -193,6 +193,7 @@ export function TasksWorkspace() {
   const [nextSteps, setNextSteps] = useState("");
   const [progressComment, setProgressComment] = useState("");
   const [progressPhotos, setProgressPhotos] = useState<File[]>([]);
+  const [progressPhotoDragActive, setProgressPhotoDragActive] = useState(false);
   const [progressEditorOpen, setProgressEditorOpen] = useState(false);
   const [editingProgressUpdateId, setEditingProgressUpdateId] = useState<
     string | null
@@ -814,6 +815,119 @@ export function TasksWorkspace() {
       await Promise.all([loadTaskProgress(editing.id), loadData(true)]);
     }
     setProgressSaving(false);
+  }
+
+  function addProgressPhotos(incomingFiles: File[]) {
+    const allowedExtensions = /\.(jpe?g|png|webp)$/i;
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    const normalizedFiles = incomingFiles
+      .filter((file) => {
+        const isImage =
+          allowedTypes.includes(file.type) ||
+          (!file.type && allowedExtensions.test(file.name));
+        if (!isImage) {
+          setError("Seules les images JPG, PNG et WebP sont acceptées.");
+          return false;
+        }
+        if (file.size > 8 * 1024 * 1024) {
+          setError(`La photo « ${file.name} » dépasse la limite de 8 Mo.`);
+          return false;
+        }
+        return true;
+      })
+      .map((file) => {
+        if (file.type) return file;
+        const extension = file.name.split(".").pop()?.toLowerCase();
+        const type =
+          extension === "png"
+            ? "image/png"
+            : extension === "webp"
+              ? "image/webp"
+              : "image/jpeg";
+        return new File([file], file.name, {
+          type,
+          lastModified: file.lastModified,
+        });
+      });
+
+    if (!normalizedFiles.length) return;
+
+    setProgressPhotos((current) => {
+      const uniqueFiles = [...current];
+      for (const file of normalizedFiles) {
+        const duplicate = uniqueFiles.some(
+          (selected) =>
+            selected.name === file.name &&
+            selected.size === file.size &&
+            selected.lastModified === file.lastModified,
+        );
+        if (!duplicate) uniqueFiles.push(file);
+      }
+      if (uniqueFiles.length > 8) {
+        setError("Maximum 8 photos par mise à jour.");
+      } else {
+        setError("");
+      }
+      return uniqueFiles.slice(0, 8);
+    });
+  }
+
+  async function handleProgressPhotoDrop(
+    event: DragEvent<HTMLLabelElement>,
+  ) {
+    event.preventDefault();
+    setProgressPhotoDragActive(false);
+
+    const droppedFiles = Array.from(event.dataTransfer.files);
+    if (droppedFiles.length) {
+      addProgressPhotos(droppedFiles);
+      return;
+    }
+
+    const imageUrl =
+      event.dataTransfer.getData("text/uri-list").split(/\r?\n/).find(
+        (value) => value && !value.startsWith("#"),
+      ) ||
+      event.dataTransfer
+        .getData("text/html")
+        .match(/<img[^>]+src=["']([^"']+)["']/i)?.[1];
+
+    if (!imageUrl) {
+      setError(
+        "Aucune image détectée. Depuis Outlook, glissez directement la pièce jointe image.",
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(imageUrl);
+      if (!response.ok) throw new Error();
+      const blob = await response.blob();
+      if (!blob.type.startsWith("image/")) throw new Error();
+      const url = new URL(imageUrl);
+      const sourceName =
+        decodeURIComponent(url.pathname.split("/").pop() || "image") ||
+        "image";
+      const extension =
+        blob.type === "image/png"
+          ? ".png"
+          : blob.type === "image/webp"
+            ? ".webp"
+            : ".jpg";
+      const fileName = /\.(jpe?g|png|webp)$/i.test(sourceName)
+        ? sourceName
+        : `${sourceName}${extension}`;
+      addProgressPhotos([
+        new File([blob], fileName, {
+          type: blob.type,
+          lastModified: Date.now(),
+        }),
+      ]);
+    } catch {
+      setError(
+        "Le navigateur bloque l’accès à cette image distante. Téléchargez-la ou glissez la pièce jointe image depuis Outlook.",
+      );
+    }
   }
 
   async function persistBuildingPhases() {
@@ -1606,16 +1720,42 @@ export function TasksWorkspace() {
                       <textarea rows={2} value={progressComment} onChange={(event) => setProgressComment(event.target.value)} className="input resize-none" />
                     </Field>
                   </div>
-                  <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-blue-200 bg-blue-50/50 p-4">
+                  <label
+                    className={`mt-4 flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed p-4 transition ${
+                      progressPhotoDragActive
+                        ? "border-[var(--opc-blue)] bg-blue-100 shadow-sm"
+                        : "border-blue-200 bg-blue-50/50"
+                    }`}
+                    onDragEnter={(event) => {
+                      event.preventDefault();
+                      setProgressPhotoDragActive(true);
+                    }}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "copy";
+                      setProgressPhotoDragActive(true);
+                    }}
+                    onDragLeave={(event) => {
+                      event.preventDefault();
+                      if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                        setProgressPhotoDragActive(false);
+                      }
+                    }}
+                    onDrop={(event) => void handleProgressPhotoDrop(event)}
+                  >
                     <Camera className="h-5 w-5 text-[var(--opc-blue)]" />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-black">Joindre les photos du jour</span>
+                      <span className="block text-sm font-black">
+                        {progressPhotoDragActive
+                          ? "Déposez les images ici"
+                          : "Glissez les photos ici ou cliquez pour les choisir"}
+                      </span>
                       <span className="block truncate text-xs text-slate-500">
                         {progressPhotos.length
                           ? `${progressPhotos.length} photo(s) sélectionnée(s)`
                           : editingProgressUpdateId
                             ? "Ajouter des photos à cette journée"
-                            : "JPG, PNG ou WebP — maximum 8 photos"}
+                            : "Outlook, navigateur ou ordinateur — JPG, PNG, WebP — maximum 8"}
                       </span>
                     </span>
                     <input
@@ -1623,9 +1763,12 @@ export function TasksWorkspace() {
                       accept="image/jpeg,image/png,image/webp"
                       multiple
                       className="sr-only"
-                      onChange={(event) =>
-                        setProgressPhotos(Array.from(event.target.files ?? []).slice(0, 8))
-                      }
+                      onChange={(event) => {
+                        addProgressPhotos(
+                          Array.from(event.target.files ?? []),
+                        );
+                        event.target.value = "";
+                      }}
                     />
                   </label>
                   <button

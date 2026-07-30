@@ -118,7 +118,7 @@ export async function downloadReportPdf(
     }
     pdf.setFontSize(9);
     pdf.text(
-      "MARCHÉ N° 625C07 PDD",
+      "MARCHÉ N° 625C07",
       pageWidth / 2,
       data.showOncfLogo ? 11 : 8,
       { align: "center" },

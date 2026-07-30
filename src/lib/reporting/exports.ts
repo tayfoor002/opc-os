@@ -383,7 +383,7 @@ export async function downloadReportWord(
                   alignment: AlignmentType.CENTER,
                   children: [
                     new TextRun({
-                      text: "MARCHÉ N° 625C07 PDD",
+                      text: "MARCHÉ N° 625C07",
                       bold: true,
                       color: "FFFFFF",
                       size: 22,
