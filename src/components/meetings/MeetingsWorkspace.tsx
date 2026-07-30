@@ -3,6 +3,7 @@
 import {
   Archive,
   CalendarDays,
+  Camera,
   CheckCircle2,
   CirclePlus,
   ClipboardList,
@@ -15,8 +16,10 @@ import {
   Loader2,
   MapPin,
   RefreshCw,
+  Rows3,
   Search,
   Sparkles,
+  Table2,
   Trash2,
   UserPlus,
   Users,
@@ -29,8 +32,10 @@ import { createClient } from "@/lib/supabase/client";
 import type { CollaboratorOption } from "@/types/organization";
 import type {
   MeetingAgendaPoint,
+  MeetingCustomTable,
   MeetingMinute,
   MeetingParticipant,
+  MeetingPhoto,
   MeetingStatus,
   MeetingType,
 } from "@/types/meeting";
@@ -50,6 +55,13 @@ type MeetingForm = Omit<
   "id" | "project_id" | "created_at" | "updated_at"
 >;
 
+type PendingMeetingPhoto = {
+  id: string;
+  file: File;
+  caption: string;
+  previewUrl: string;
+};
+
 function today() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -66,6 +78,15 @@ function newPoint(subject = ""): MeetingAgendaPoint {
   };
 }
 
+function newCustomTable(): MeetingCustomTable {
+  return {
+    id: crypto.randomUUID(),
+    title: "Nouveau tableau",
+    columns: ["Colonne 1", "Colonne 2", "Colonne 3"],
+    rows: [["", "", ""]],
+  };
+}
+
 function emptyMeeting(): MeetingForm {
   return {
     title: "",
@@ -78,6 +99,8 @@ function emptyMeeting(): MeetingForm {
     introduction: "",
     participants: [],
     agenda_points: [newPoint()],
+    custom_tables: [],
+    photos: [],
     general_notes: "",
     next_meeting_date: "",
     status: "draft",
@@ -91,6 +114,11 @@ function cleanFileName(value: string) {
     .replace(/[^a-zA-Z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .toLowerCase();
+}
+
+function safeStorageFileName(value: string) {
+  return cleanFileName(value.replace(/\.[^.]+$/, "")) +
+    (value.match(/\.[a-zA-Z0-9]+$/)?.[0].toLowerCase() || ".jpg");
 }
 
 export function MeetingsWorkspace() {
@@ -115,6 +143,11 @@ export function MeetingsWorkspace() {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "word" | null>(null);
   const [showOncfLogo, setShowOncfLogo] = useState(false);
+  const [meetingPhotoUrls, setMeetingPhotoUrls] = useState<
+    Record<string, string>
+  >({});
+  const [pendingPhotos, setPendingPhotos] = useState<PendingMeetingPhoto[]>([]);
+  const [removedPhotoPaths, setRemovedPhotoPaths] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [meetingToDelete, setMeetingToDelete] =
@@ -164,9 +197,33 @@ export function MeetingsWorkspace() {
         `Les comptes rendus ne sont pas encore disponibles : ${meetingsResult.error.message}`,
       );
     } else {
-      setMeetings(
-        (meetingsResult.data ?? []) as unknown as MeetingMinute[],
+      const loadedMeetings = (
+        (meetingsResult.data ?? []) as unknown as MeetingMinute[]
+      ).map((meeting) => ({
+        ...meeting,
+        custom_tables: meeting.custom_tables ?? [],
+        photos: meeting.photos ?? [],
+      }));
+      setMeetings(loadedMeetings);
+      const photoPaths = loadedMeetings.flatMap((meeting) =>
+        meeting.photos.map((photo) => photo.file_path).filter(Boolean),
       );
+      if (photoPaths.length) {
+        const signed = await supabase.storage
+          .from("meeting-photos")
+          .createSignedUrls(photoPaths, 60 * 60);
+        if (!signed.error) {
+          setMeetingPhotoUrls(
+            Object.fromEntries(
+              (signed.data ?? [])
+                .filter((item) => item.signedUrl)
+                .map((item) => [item.path, item.signedUrl]),
+            ),
+          );
+        }
+      } else {
+        setMeetingPhotoUrls({});
+      }
     }
     setLoading(false);
   }
@@ -198,13 +255,28 @@ export function MeetingsWorkspace() {
     id: editingId ?? "preview",
     project_id: projectId,
     ...form,
+    photos: [
+      ...form.photos.map((photo) => ({
+        ...photo,
+        url: meetingPhotoUrls[photo.file_path],
+      })),
+      ...pendingPhotos.map((photo) => ({
+        id: photo.id,
+        file_path: "",
+        caption: photo.caption,
+        url: photo.previewUrl,
+      })),
+    ],
     created_at: "",
     updated_at: "",
   };
 
   function startNewMeeting() {
+    pendingPhotos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
     setEditingId(null);
     setForm(emptyMeeting());
+    setPendingPhotos([]);
+    setRemovedPhotoPaths([]);
     setRawPoints("");
     setNotice("");
     setError("");
@@ -212,6 +284,7 @@ export function MeetingsWorkspace() {
   }
 
   function openMeeting(meeting: MeetingMinute) {
+    pendingPhotos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
     setEditingId(meeting.id);
     setForm({
       title: meeting.title,
@@ -227,11 +300,15 @@ export function MeetingsWorkspace() {
         meeting.agenda_points?.length > 0
           ? meeting.agenda_points
           : [newPoint()],
+      custom_tables: meeting.custom_tables ?? [],
+      photos: meeting.photos ?? [],
       general_notes: meeting.general_notes ?? "",
       next_meeting_date: meeting.next_meeting_date ?? "",
       status: meeting.status,
     });
     setRawPoints("");
+    setPendingPhotos([]);
+    setRemovedPhotoPaths([]);
     setNotice("");
     setError("");
     setView("generator");
@@ -323,6 +400,104 @@ export function MeetingsWorkspace() {
     });
   }
 
+  function updateCustomTable(
+    tableId: string,
+    patch: Partial<MeetingCustomTable>,
+  ) {
+    setForm((current) => ({
+      ...current,
+      custom_tables: current.custom_tables.map((table) =>
+        table.id === tableId ? { ...table, ...patch } : table,
+      ),
+    }));
+  }
+
+  function addTableColumn(table: MeetingCustomTable) {
+    updateCustomTable(table.id, {
+      columns: [...table.columns, `Colonne ${table.columns.length + 1}`],
+      rows: table.rows.map((row) => [...row, ""]),
+    });
+  }
+
+  function removeTableColumn(table: MeetingCustomTable, columnIndex: number) {
+    if (table.columns.length <= 1) return;
+    updateCustomTable(table.id, {
+      columns: table.columns.filter((_, index) => index !== columnIndex),
+      rows: table.rows.map((row) =>
+        row.filter((_, index) => index !== columnIndex),
+      ),
+    });
+  }
+
+  function updateTableCell(
+    table: MeetingCustomTable,
+    rowIndex: number,
+    columnIndex: number,
+    value: string,
+  ) {
+    updateCustomTable(table.id, {
+      rows: table.rows.map((row, currentRowIndex) =>
+        currentRowIndex === rowIndex
+          ? row.map((cell, currentColumnIndex) =>
+              currentColumnIndex === columnIndex ? value : cell,
+            )
+          : row,
+      ),
+    });
+  }
+
+  function addMeetingPhotos(files: File[]) {
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    const validFiles = files.filter((file) => {
+      if (!allowedTypes.includes(file.type)) {
+        setError("Seules les images JPG, PNG et WebP sont acceptées.");
+        return false;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        setError(`La photo « ${file.name} » dépasse 8 Mo.`);
+        return false;
+      }
+      return true;
+    });
+    if (!validFiles.length) return;
+
+    setPendingPhotos((current) => {
+      const available = Math.max(0, 12 - form.photos.length - current.length);
+      if (validFiles.length > available) {
+        setError("Maximum 12 photos par compte rendu.");
+      } else {
+        setError("");
+      }
+      return [
+        ...current,
+        ...validFiles.slice(0, available).map((file) => ({
+          id: crypto.randomUUID(),
+          file,
+          caption: "",
+          previewUrl: URL.createObjectURL(file),
+        })),
+      ];
+    });
+  }
+
+  function removePendingPhoto(photoId: string) {
+    setPendingPhotos((current) => {
+      const photo = current.find((item) => item.id === photoId);
+      if (photo) URL.revokeObjectURL(photo.previewUrl);
+      return current.filter((item) => item.id !== photoId);
+    });
+  }
+
+  function removeSavedPhoto(photo: MeetingPhoto) {
+    setForm((current) => ({
+      ...current,
+      photos: current.photos.filter((item) => item.id !== photo.id),
+    }));
+    if (photo.file_path) {
+      setRemovedPhotoPaths((current) => [...current, photo.file_path]);
+    }
+  }
+
   async function saveMeeting(status: MeetingStatus) {
     if (!projectId || !form.title.trim() || !form.meeting_date) {
       setError("Le titre et la date de réunion sont obligatoires.");
@@ -348,6 +523,12 @@ export function MeetingsWorkspace() {
           point.discussion.trim() ||
           point.decision.trim(),
       ),
+      custom_tables: form.custom_tables,
+      photos: form.photos.map(({ id, file_path, caption }) => ({
+        id,
+        file_path,
+        caption,
+      })),
       general_notes: form.general_notes?.trim() || null,
       next_meeting_date: form.next_meeting_date || null,
       status,
@@ -368,9 +549,64 @@ export function MeetingsWorkspace() {
     if (result.error) {
       setError(result.error.message);
     } else {
-      const saved = result.data as unknown as MeetingMinute;
+      let saved = result.data as unknown as MeetingMinute;
       setEditingId(saved.id);
-      setForm((current) => ({ ...current, status }));
+      const uploadedPhotos: MeetingPhoto[] = [];
+      const uploadedPaths: string[] = [];
+      for (const photo of pendingPhotos) {
+        const path = `${projectId}/${saved.id}/${crypto.randomUUID()}-${safeStorageFileName(photo.file.name)}`;
+        const upload = await supabase.storage
+          .from("meeting-photos")
+          .upload(path, photo.file, {
+            contentType: photo.file.type,
+            upsert: false,
+          });
+        if (upload.error) {
+          if (uploadedPaths.length) {
+            await supabase.storage.from("meeting-photos").remove(uploadedPaths);
+          }
+          setError(`Impossible d’envoyer les photos : ${upload.error.message}`);
+          setSaving(false);
+          return;
+        }
+        uploadedPaths.push(path);
+        uploadedPhotos.push({
+          id: photo.id,
+          file_path: path,
+          caption: photo.caption.trim(),
+        });
+      }
+
+      const mergedPhotos = [...form.photos, ...uploadedPhotos];
+      if (uploadedPhotos.length) {
+        const photoUpdate = await supabase
+          .from("meeting_minutes")
+          .update({ photos: mergedPhotos })
+          .eq("id", saved.id)
+          .select("*")
+          .single();
+        if (photoUpdate.error) {
+          await supabase.storage.from("meeting-photos").remove(uploadedPaths);
+          setError(photoUpdate.error.message);
+          setSaving(false);
+          return;
+        }
+        saved = photoUpdate.data as unknown as MeetingMinute;
+      }
+      if (removedPhotoPaths.length) {
+        await supabase.storage
+          .from("meeting-photos")
+          .remove(removedPhotoPaths);
+      }
+      pendingPhotos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+      setPendingPhotos([]);
+      setRemovedPhotoPaths([]);
+      setEditingId(saved.id);
+      setForm((current) => ({
+        ...current,
+        photos: mergedPhotos,
+        status,
+      }));
       setNotice(
         status === "finalized"
           ? "Compte rendu finalisé et archivé."
@@ -391,6 +627,12 @@ export function MeetingsWorkspace() {
     if (result.error) {
       setError(result.error.message);
     } else {
+      const photoPaths = (meetingToDelete.photos ?? [])
+        .map((photo) => photo.file_path)
+        .filter(Boolean);
+      if (photoPaths.length) {
+        await supabase.storage.from("meeting-photos").remove(photoPaths);
+      }
       if (editingId === meetingToDelete.id) startNewMeeting();
       setMeetingToDelete(null);
       await loadMeetings();
@@ -879,6 +1121,333 @@ export function MeetingsWorkspace() {
             <section className="rounded-2xl border border-[var(--opc-border)] bg-white p-5 shadow-sm">
               <SectionHeading
                 number="4"
+                title="Photos et tableaux"
+                icon={<Camera className="h-5 w-5" />}
+              />
+
+              <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-[var(--opc-blue)]">
+                      Photos de la réunion
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Ajoutez jusqu’à 12 photos avec une légende. Elles seront
+                      archivées dans le CR et intégrées aux exports.
+                    </p>
+                  </div>
+                  <label className="flex h-10 cursor-pointer items-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 text-xs font-black text-white">
+                    <Camera className="h-4 w-4" /> Ajouter des photos
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      multiple
+                      className="sr-only"
+                      onChange={(event) => {
+                        addMeetingPhotos(
+                          Array.from(event.target.files ?? []),
+                        );
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {form.photos.length || pendingPhotos.length ? (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {form.photos.map((photo) => (
+                      <article
+                        key={photo.id}
+                        className="overflow-hidden rounded-xl border border-[var(--opc-border)] bg-white"
+                      >
+                        <div className="relative aspect-video bg-slate-100">
+                          {meetingPhotoUrls[photo.file_path] ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={meetingPhotoUrls[photo.file_path]}
+                              alt={photo.caption || "Photo de réunion"}
+                              className="h-full w-full object-contain"
+                            />
+                          ) : (
+                            <div className="grid h-full place-items-center text-xs font-bold text-slate-400">
+                              Photo enregistrée
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeSavedPhoto(photo)}
+                            className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-white/95 text-[var(--opc-red)] shadow"
+                            title="Retirer la photo"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <input
+                          value={photo.caption}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              photos: current.photos.map((item) =>
+                                item.id === photo.id
+                                  ? { ...item, caption: event.target.value }
+                                  : item,
+                              ),
+                            }))
+                          }
+                          placeholder="Légende de la photo..."
+                          className="w-full border-t border-[var(--opc-border)] px-3 py-2 text-xs outline-none"
+                        />
+                      </article>
+                    ))}
+                    {pendingPhotos.map((photo) => (
+                      <article
+                        key={photo.id}
+                        className="overflow-hidden rounded-xl border border-blue-200 bg-white"
+                      >
+                        <div className="relative aspect-video bg-slate-100">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={photo.previewUrl}
+                            alt={photo.caption || photo.file.name}
+                            className="h-full w-full object-contain"
+                          />
+                          <span className="absolute left-2 top-2 rounded-full bg-blue-600 px-2 py-1 text-[9px] font-black uppercase text-white">
+                            Nouvelle
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removePendingPhoto(photo.id)}
+                            className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-white/95 text-[var(--opc-red)] shadow"
+                            title="Retirer la photo"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <input
+                          value={photo.caption}
+                          onChange={(event) =>
+                            setPendingPhotos((current) =>
+                              current.map((item) =>
+                                item.id === photo.id
+                                  ? { ...item, caption: event.target.value }
+                                  : item,
+                              ),
+                            )
+                          }
+                          placeholder="Légende de la photo..."
+                          className="w-full border-t border-[var(--opc-border)] px-3 py-2 text-xs outline-none"
+                        />
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <label className="mt-4 grid min-h-28 cursor-pointer place-items-center rounded-xl border-2 border-dashed border-blue-200 bg-white/70 p-4 text-center">
+                    <span>
+                      <Camera className="mx-auto h-6 w-6 text-[var(--opc-blue)]" />
+                      <span className="mt-2 block text-sm font-black">
+                        Cliquez pour joindre des photos
+                      </span>
+                      <span className="mt-1 block text-xs text-slate-400">
+                        JPG, PNG ou WebP — 8 Mo maximum par photo
+                      </span>
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      multiple
+                      className="sr-only"
+                      onChange={(event) => {
+                        addMeetingPhotos(
+                          Array.from(event.target.files ?? []),
+                        );
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              <div className="mt-5 rounded-xl border border-violet-100 bg-violet-50/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="flex items-center gap-2 text-sm font-black text-violet-700">
+                      <Table2 className="h-4 w-4" /> Tableaux personnalisés
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Créez des tableaux pour les suivis, quantités, réserves
+                      ou décisions détaillées.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setForm((current) => ({
+                        ...current,
+                        custom_tables: [
+                          ...current.custom_tables,
+                          newCustomTable(),
+                        ],
+                      }))
+                    }
+                    className="flex h-10 items-center gap-2 rounded-xl bg-violet-600 px-4 text-xs font-black text-white"
+                  >
+                    <CirclePlus className="h-4 w-4" /> Ajouter un tableau
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-4">
+                  {form.custom_tables.map((table, tableIndex) => (
+                    <article
+                      key={table.id}
+                      className="rounded-xl border border-violet-200 bg-white p-4"
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={table.title}
+                          onChange={(event) =>
+                            updateCustomTable(table.id, {
+                              title: event.target.value,
+                            })
+                          }
+                          className="input min-w-0 flex-1 font-black"
+                          placeholder={`Titre du tableau ${tableIndex + 1}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setForm((current) => ({
+                              ...current,
+                              custom_tables: current.custom_tables.filter(
+                                (item) => item.id !== table.id,
+                              ),
+                            }))
+                          }
+                          className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-red-200 text-[var(--opc-red)]"
+                          title="Supprimer le tableau"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="min-w-full border-collapse text-xs">
+                          <thead>
+                            <tr>
+                              {table.columns.map((column, columnIndex) => (
+                                <th
+                                  key={`${table.id}-column-${columnIndex}`}
+                                  className="min-w-36 border border-slate-200 bg-slate-100 p-2"
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      value={column}
+                                      onChange={(event) =>
+                                        updateCustomTable(table.id, {
+                                          columns: table.columns.map(
+                                            (item, index) =>
+                                              index === columnIndex
+                                                ? event.target.value
+                                                : item,
+                                          ),
+                                        })
+                                      }
+                                      className="min-w-0 flex-1 bg-transparent font-black outline-none"
+                                    />
+                                    {table.columns.length > 1 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          removeTableColumn(table, columnIndex)
+                                        }
+                                        className="text-slate-400 hover:text-[var(--opc-red)]"
+                                        title="Supprimer la colonne"
+                                      >
+                                        ×
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </th>
+                              ))}
+                              <th className="w-10 border border-slate-200 bg-slate-50" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {table.rows.map((row, rowIndex) => (
+                              <tr key={`${table.id}-row-${rowIndex}`}>
+                                {table.columns.map((_, columnIndex) => (
+                                  <td
+                                    key={`${table.id}-${rowIndex}-${columnIndex}`}
+                                    className="border border-slate-200 p-1"
+                                  >
+                                    <textarea
+                                      rows={2}
+                                      value={row[columnIndex] ?? ""}
+                                      onChange={(event) =>
+                                        updateTableCell(
+                                          table,
+                                          rowIndex,
+                                          columnIndex,
+                                          event.target.value,
+                                        )
+                                      }
+                                      className="w-full min-w-32 resize-none rounded-md p-2 outline-none focus:bg-blue-50"
+                                    />
+                                  </td>
+                                ))}
+                                <td className="border border-slate-200 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateCustomTable(table.id, {
+                                        rows: table.rows.filter(
+                                          (_, index) => index !== rowIndex,
+                                        ),
+                                      })
+                                    }
+                                    className="text-slate-400 hover:text-[var(--opc-red)]"
+                                    title="Supprimer la ligne"
+                                  >
+                                    ×
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateCustomTable(table.id, {
+                              rows: [
+                                ...table.rows,
+                                table.columns.map(() => ""),
+                              ],
+                            })
+                          }
+                          className="flex h-9 items-center gap-2 rounded-lg border border-violet-200 px-3 text-xs font-black text-violet-700"
+                        >
+                          <Rows3 className="h-4 w-4" /> Ajouter une ligne
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => addTableColumn(table)}
+                          className="flex h-9 items-center gap-2 rounded-lg border border-violet-200 px-3 text-xs font-black text-violet-700"
+                        >
+                          <Table2 className="h-4 w-4" /> Ajouter une colonne
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-[var(--opc-border)] bg-white p-5 shadow-sm">
+              <SectionHeading
+                number="5"
                 title="Clôture du CR"
                 icon={<CheckCircle2 className="h-5 w-5" />}
               />
@@ -1301,7 +1870,85 @@ function MeetingPreview({
           )}
         </PreviewSection>
 
-        <PreviewSection number="4" title="Observations générales">
+        {meeting.custom_tables.length || meeting.photos.length ? (
+          <PreviewSection number="4" title="Photos et tableaux complémentaires">
+            {meeting.custom_tables.map((table) => (
+              <div key={table.id} className="mb-5">
+                <h4 className="mb-2 text-sm font-black text-[var(--opc-blue)]">
+                  {table.title || "Tableau"}
+                </h4>
+                <div className="overflow-x-auto rounded-xl border border-[var(--opc-border)]">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        {table.columns.map((column, index) => (
+                          <th
+                            key={`${table.id}-preview-column-${index}`}
+                            className="border-r border-[var(--opc-border)] px-3 py-2 font-black last:border-r-0"
+                          >
+                            {column || `Colonne ${index + 1}`}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {table.rows.map((row, rowIndex) => (
+                        <tr
+                          key={`${table.id}-preview-row-${rowIndex}`}
+                          className="border-t border-[var(--opc-border)]"
+                        >
+                          {table.columns.map((_, columnIndex) => (
+                            <td
+                              key={`${table.id}-preview-${rowIndex}-${columnIndex}`}
+                              className="whitespace-pre-wrap border-r border-[var(--opc-border)] px-3 py-2 align-top last:border-r-0"
+                            >
+                              {row[columnIndex] || "—"}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+
+            {meeting.photos.length ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {meeting.photos.map((photo, index) => (
+                  <figure
+                    key={photo.id}
+                    className="overflow-hidden rounded-xl border border-[var(--opc-border)] bg-slate-50"
+                  >
+                    {photo.url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={photo.url}
+                        alt={photo.caption || `Photo ${index + 1}`}
+                        className="aspect-[4/3] w-full object-contain"
+                      />
+                    ) : (
+                      <div className="grid aspect-[4/3] place-items-center text-xs font-bold text-slate-400">
+                        Photo indisponible
+                      </div>
+                    )}
+                    <figcaption className="border-t border-[var(--opc-border)] bg-white px-3 py-2 text-xs">
+                      <strong>Photo {index + 1}</strong>
+                      {photo.caption ? ` — ${photo.caption}` : ""}
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            ) : null}
+          </PreviewSection>
+        ) : null}
+
+        <PreviewSection
+          number={
+            meeting.custom_tables.length || meeting.photos.length ? "5" : "4"
+          }
+          title="Observations générales"
+        >
           <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">
             {meeting.general_notes || "Rien à signaler."}
           </p>
@@ -1312,7 +1959,12 @@ function MeetingPreview({
           ) : null}
         </PreviewSection>
 
-        <PreviewSection number="5" title="Validation">
+        <PreviewSection
+          number={
+            meeting.custom_tables.length || meeting.photos.length ? "6" : "5"
+          }
+          title="Validation"
+        >
           <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-[var(--opc-border)] text-center text-xs">
             {["Établi par", "Vérifié par", "Approuvé par"].map((label) => (
               <div

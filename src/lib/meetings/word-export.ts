@@ -1,5 +1,51 @@
 import type { MeetingMinute } from "@/types/meeting";
 
+async function loadMeetingImage(path: string) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`Image indisponible : ${path}`);
+  const blob = await response.blob();
+  const bitmap = await createImageBitmap(blob);
+  if (blob.type.includes("webp")) {
+    const canvas = window.document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Impossible de convertir la photo WebP.");
+    context.drawImage(bitmap, 0, 0);
+    const pngBlob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob(
+        (result) =>
+          result
+            ? resolve(result)
+            : reject(new Error("Conversion WebP impossible.")),
+        "image/png",
+      ),
+    );
+    return {
+      bytes: new Uint8Array(await pngBlob.arrayBuffer()),
+      type: "png" as const,
+      width: bitmap.width,
+      height: bitmap.height,
+    };
+  }
+  return {
+    bytes: new Uint8Array(await blob.arrayBuffer()),
+    type: blob.type.includes("jpeg") ? ("jpg" as const) : ("png" as const),
+    width: bitmap.width,
+    height: bitmap.height,
+  };
+}
+
+function fitMeetingImage(
+  width: number,
+  height: number,
+  maximumWidth: number,
+  maximumHeight: number,
+) {
+  const ratio = Math.min(maximumWidth / width, maximumHeight / height);
+  return { width: width * ratio, height: height * ratio };
+}
+
 function saveBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -19,6 +65,7 @@ export async function downloadMeetingWord(
     BorderStyle,
     Document,
     HeadingLevel,
+    ImageRun,
     Packer,
     Paragraph,
     ShadingType,
@@ -54,6 +101,107 @@ export async function downloadMeetingWord(
       },
       children: [new TextRun({ text, bold: true, color: "16233B" })],
     });
+
+  let nextSectionNumber = 4;
+  const complementaryContent = [];
+  if (meeting.custom_tables.length) {
+    complementaryContent.push(
+      sectionTitle(`${nextSectionNumber}. Tableaux complémentaires`),
+    );
+    nextSectionNumber += 1;
+    for (const customTable of meeting.custom_tables) {
+      complementaryContent.push(
+        new Paragraph({
+          spacing: { before: 160, after: 80 },
+          children: [
+            new TextRun({
+              text: customTable.title || "Tableau",
+              bold: true,
+              color: "005EB8",
+            }),
+          ],
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          borders,
+          rows: [
+            new TableRow({
+              children: customTable.columns.map((column, index) =>
+                cell(column || `Colonne ${index + 1}`, true),
+              ),
+            }),
+            ...customTable.rows.map(
+              (row) =>
+                new TableRow({
+                  children: customTable.columns.map((_, index) =>
+                    cell(row[index] || "—"),
+                  ),
+                }),
+            ),
+          ],
+        }),
+      );
+    }
+  }
+
+  if (meeting.photos.length) {
+    complementaryContent.push(
+      sectionTitle(`${nextSectionNumber}. Photographies`),
+    );
+    nextSectionNumber += 1;
+    for (let index = 0; index < meeting.photos.length; index += 1) {
+      const photo = meeting.photos[index];
+      if (!photo.url) continue;
+      try {
+        const image = await loadMeetingImage(photo.url);
+        const dimensions = fitMeetingImage(
+          image.width,
+          image.height,
+          500,
+          320,
+        );
+        complementaryContent.push(
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 140, after: 60 },
+            children: [
+              new ImageRun({
+                data: image.bytes,
+                type: image.type,
+                transformation: dimensions,
+              }),
+            ],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 140 },
+            children: [
+              new TextRun({
+                text: `Photo ${index + 1}${photo.caption ? ` — ${photo.caption}` : ""}`,
+                italics: true,
+                color: "526174",
+                size: 18,
+              }),
+            ],
+          }),
+        );
+      } catch {
+        complementaryContent.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `Photo ${index + 1} indisponible${photo.caption ? ` — ${photo.caption}` : ""}`,
+                italics: true,
+                color: "526174",
+              }),
+            ],
+          }),
+        );
+      }
+    }
+  }
+  const observationsSectionNumber = nextSectionNumber;
+  const validationSectionNumber = nextSectionNumber + 1;
 
   const document = new Document({
     sections: [
@@ -235,7 +383,8 @@ export async function downloadMeetingWord(
               ),
             ],
           }),
-          sectionTitle("4. Observations générales"),
+          ...complementaryContent,
+          sectionTitle(`${observationsSectionNumber}. Observations générales`),
           new Paragraph(meeting.general_notes || "Rien à signaler."),
           ...(meeting.next_meeting_date
             ? [
@@ -251,7 +400,7 @@ export async function downloadMeetingWord(
                 }),
               ]
             : []),
-          sectionTitle("5. Validation"),
+          sectionTitle(`${validationSectionNumber}. Validation`),
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             borders,

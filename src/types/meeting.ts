@@ -27,6 +27,20 @@ export type MeetingAgendaPoint = {
   status: "open" | "done";
 };
 
+export type MeetingCustomTable = {
+  id: string;
+  title: string;
+  columns: string[];
+  rows: string[][];
+};
+
+export type MeetingPhoto = {
+  id: string;
+  file_path: string;
+  caption: string;
+  url?: string;
+};
+
 export type MeetingMinute = {
   id: string;
   project_id: string;
@@ -40,6 +54,8 @@ export type MeetingMinute = {
   introduction: string | null;
   participants: MeetingParticipant[];
   agenda_points: MeetingAgendaPoint[];
+  custom_tables: MeetingCustomTable[];
+  photos: MeetingPhoto[];
   general_notes: string | null;
   next_meeting_date: string | null;
   status: MeetingStatus;
