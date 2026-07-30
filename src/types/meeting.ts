@@ -32,6 +32,9 @@ export type MeetingCustomTable = {
   title: string;
   columns: string[];
   rows: string[][];
+  source?: "manual" | "excel";
+  source_file?: string;
+  source_sheet?: string;
 };
 
 export type MeetingPhoto = {

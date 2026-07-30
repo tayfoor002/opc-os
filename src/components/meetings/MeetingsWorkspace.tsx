@@ -12,6 +12,7 @@ import {
   Eye,
   EyeOff,
   FileDown,
+  FileSpreadsheet,
   FileText,
   Loader2,
   MapPin,
@@ -27,6 +28,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { downloadReportPdf } from "@/lib/reporting/exports";
+import { importMeetingTablesFromExcel } from "@/lib/meetings/excel-import";
 import { downloadMeetingWord } from "@/lib/meetings/word-export";
 import { createClient } from "@/lib/supabase/client";
 import type { CollaboratorOption } from "@/types/organization";
@@ -142,6 +144,7 @@ export function MeetingsWorkspace() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "word" | null>(null);
+  const [excelImporting, setExcelImporting] = useState(false);
   const [showOncfLogo, setShowOncfLogo] = useState(false);
   const [meetingPhotoUrls, setMeetingPhotoUrls] = useState<
     Record<string, string>
@@ -495,6 +498,33 @@ export function MeetingsWorkspace() {
     }));
     if (photo.file_path) {
       setRemovedPhotoPaths((current) => [...current, photo.file_path]);
+    }
+  }
+
+  async function importExcelTables(file: File) {
+    setExcelImporting(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await importMeetingTablesFromExcel(file);
+      setForm((current) => ({
+        ...current,
+        custom_tables: [...current.custom_tables, ...result.tables],
+      }));
+      const warningText = result.warnings.length
+        ? ` ${result.warnings.join(" ")}`
+        : "";
+      setNotice(
+        `${result.tables.length} tableau(x) créé(s) depuis ${result.importedSheets} feuille(s) Excel.${warningText}`,
+      );
+    } catch (importError) {
+      setError(
+        importError instanceof Error
+          ? importError.message
+          : "Impossible de convertir ce fichier Excel.",
+      );
+    } finally {
+      setExcelImporting(false);
     }
   }
 
@@ -1278,21 +1308,48 @@ export function MeetingsWorkspace() {
                       ou décisions détaillées.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setForm((current) => ({
-                        ...current,
-                        custom_tables: [
-                          ...current.custom_tables,
-                          newCustomTable(),
-                        ],
-                      }))
-                    }
-                    className="flex h-10 items-center gap-2 rounded-xl bg-violet-600 px-4 text-xs font-black text-white"
-                  >
-                    <CirclePlus className="h-4 w-4" /> Ajouter un tableau
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <label
+                      className={`flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-xs font-black text-emerald-700 ${
+                        excelImporting ? "pointer-events-none opacity-60" : ""
+                      }`}
+                    >
+                      {excelImporting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <FileSpreadsheet className="h-4 w-4" />
+                      )}
+                      {excelImporting
+                        ? "Conversion..."
+                        : "Importer un Excel"}
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                        disabled={excelImporting}
+                        className="sr-only"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void importExcelTables(file);
+                          event.target.value = "";
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setForm((current) => ({
+                          ...current,
+                          custom_tables: [
+                            ...current.custom_tables,
+                            newCustomTable(),
+                          ],
+                        }))
+                      }
+                      className="flex h-10 items-center gap-2 rounded-xl bg-violet-600 px-4 text-xs font-black text-white"
+                    >
+                      <CirclePlus className="h-4 w-4" /> Tableau manuel
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-4 space-y-4">
@@ -1301,6 +1358,16 @@ export function MeetingsWorkspace() {
                       key={table.id}
                       className="rounded-xl border border-violet-200 bg-white p-4"
                     >
+                      {table.source === "excel" ? (
+                        <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px] font-bold text-emerald-700">
+                          <span className="rounded-full bg-emerald-50 px-2.5 py-1">
+                            Import Excel
+                          </span>
+                          <span className="truncate text-slate-400">
+                            {table.source_file} — feuille {table.source_sheet}
+                          </span>
+                        </div>
+                      ) : null}
                       <div className="flex items-center gap-2">
                         <input
                           value={table.title}
@@ -1878,13 +1945,13 @@ function MeetingPreview({
                   {table.title || "Tableau"}
                 </h4>
                 <div className="overflow-x-auto rounded-xl border border-[var(--opc-border)]">
-                  <table className="w-full border-collapse text-left text-xs">
+                  <table className="w-full table-fixed border-collapse text-left text-xs">
                     <thead className="bg-slate-100">
                       <tr>
                         {table.columns.map((column, index) => (
                           <th
                             key={`${table.id}-preview-column-${index}`}
-                            className="border-r border-[var(--opc-border)] px-3 py-2 font-black last:border-r-0"
+                            className="break-words border-r border-[var(--opc-border)] px-2 py-2 font-black last:border-r-0"
                           >
                             {column || `Colonne ${index + 1}`}
                           </th>
@@ -1900,7 +1967,7 @@ function MeetingPreview({
                           {table.columns.map((_, columnIndex) => (
                             <td
                               key={`${table.id}-preview-${rowIndex}-${columnIndex}`}
-                              className="whitespace-pre-wrap border-r border-[var(--opc-border)] px-3 py-2 align-top last:border-r-0"
+                              className="break-words whitespace-pre-wrap border-r border-[var(--opc-border)] px-2 py-2 align-top last:border-r-0"
                             >
                               {row[columnIndex] || "—"}
                             </td>

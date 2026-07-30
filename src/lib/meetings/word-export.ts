@@ -84,11 +84,25 @@ export async function downloadMeetingWord(
     insideHorizontal: { style: BorderStyle.SINGLE, color: "D9E2EC", size: 1 },
     insideVertical: { style: BorderStyle.SINGLE, color: "D9E2EC", size: 1 },
   };
-  const cell = (text: string, bold = false, color = "16233B") =>
+  const cell = (
+    text: string,
+    bold = false,
+    color = "16233B",
+    size = 18,
+    widthPercent?: number,
+  ) =>
     new TableCell({
+      ...(widthPercent
+        ? {
+            width: {
+              size: widthPercent,
+              type: WidthType.PERCENTAGE,
+            },
+          }
+        : {}),
       children: [
         new Paragraph({
-          children: [new TextRun({ text: text || "—", bold, color, size: 18 })],
+          children: [new TextRun({ text: text || "—", bold, color, size })],
         }),
       ],
     });
@@ -110,6 +124,13 @@ export async function downloadMeetingWord(
     );
     nextSectionNumber += 1;
     for (const customTable of meeting.custom_tables) {
+      const widthPercent = 100 / Math.max(1, customTable.columns.length);
+      const tableFontSize =
+        customTable.columns.length >= 5
+          ? 14
+          : customTable.columns.length >= 3
+            ? 16
+            : 18;
       complementaryContent.push(
         new Paragraph({
           spacing: { before: 160, after: 80 },
@@ -127,14 +148,26 @@ export async function downloadMeetingWord(
           rows: [
             new TableRow({
               children: customTable.columns.map((column, index) =>
-                cell(column || `Colonne ${index + 1}`, true),
+                cell(
+                  column || `Colonne ${index + 1}`,
+                  true,
+                  "16233B",
+                  tableFontSize,
+                  widthPercent,
+                ),
               ),
             }),
             ...customTable.rows.map(
               (row) =>
                 new TableRow({
                   children: customTable.columns.map((_, index) =>
-                    cell(row[index] || "—"),
+                    cell(
+                      row[index] || "—",
+                      false,
+                      "16233B",
+                      tableFontSize,
+                      widthPercent,
+                    ),
                   ),
                 }),
             ),
