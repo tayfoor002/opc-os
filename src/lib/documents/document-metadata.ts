@@ -127,8 +127,10 @@ function revisionRank(value: string) {
 function revisionFromHistoryRow(value: string, reference: string) {
   const explicit = findRevision(value);
   if (explicit) return explicit;
-  const remainder = value
-    .replace(referencePrefixPattern(reference), "")
+  const remainder = (reference
+    ? value.replace(referencePrefixPattern(reference), "")
+    : value
+  )
     .replace(/^[\s:|_-]+/, "")
     .trim();
   const bare = remainder.match(/^(?:V\s*)?0*(\d{1,3})$|^([A-Z])$/i);
@@ -298,6 +300,29 @@ function metadataFromReferenceColumn(
         item.text.trim(),
     );
     const columnRows = groupPositionedText(columnItems);
+    const revisionItems = revisionHeader
+      ? items.filter(
+          (item) =>
+            item.y < revisionHeader.y - 2 &&
+            item.y >= revisionHeader.y - 190 &&
+            item.x >=
+              revisionHeader.x -
+                Math.max(30, revisionHeader.width * 1.25) &&
+            item.x < revisionRightBoundary &&
+            item.text.trim(),
+        )
+      : [];
+    const tableRevisions = groupPositionedText(revisionItems)
+      .map((row) => ({
+        revision: revisionFromHistoryRow(row.text, ""),
+        y: row.y,
+      }))
+      .filter(({ revision }) => revisionRank(revision) >= 0)
+      .sort((left, right) => {
+        const revisionOrder =
+          revisionRank(right.revision) - revisionRank(left.revision);
+        return revisionOrder || left.y - right.y;
+      });
     const detectedRows: Array<{
       reference: string;
       revision: string;
@@ -313,27 +338,17 @@ function metadataFromReferenceColumn(
         const reference = findReferenceInColumnText(combined);
         if (!reference) continue;
         const referenceY = columnRows[index].y;
-        const revisionItems = items.filter(
-          (item) =>
-            revisionHeader &&
-            item.y < revisionHeader.y - 2 &&
-            item.y >= revisionHeader.y - 190 &&
-            item.x >=
-              revisionHeader.x -
-                Math.max(20, revisionHeader.width * 0.6) &&
-            item.x < revisionRightBoundary &&
-            Math.abs(item.y - referenceY) <= 18 &&
-            item.text.trim(),
-        );
-        const revisionText = revisionItems
+        const sameRowRevisionText = revisionItems
+          .filter((item) => Math.abs(item.y - referenceY) <= 3)
           .sort((left, right) => left.x - right.x)
           .map(({ text }) => text)
           .join(" ");
         detectedRows.push({
           reference,
           revision:
-            findRevision(revisionText) ||
-            revisionFromHistoryRow(revisionText, reference),
+            tableRevisions[0]?.revision ||
+            findRevision(sameRowRevisionText) ||
+            revisionFromHistoryRow(sameRowRevisionText, reference),
           y: referenceY,
         });
         break;
