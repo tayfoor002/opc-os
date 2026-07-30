@@ -1128,13 +1128,10 @@ function MeetingPreview({
             PROGRAMME DE DÉVELOPPEMENT
           </p>
         </div>
-        <div className="flex h-16 items-center justify-center rounded-lg bg-white p-1.5">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/avanzit-logo.svg"
-            alt="Avanzit"
-            className="h-auto max-h-14 w-auto max-w-full object-contain"
-          />
+        <div className="flex h-16 items-center justify-center p-2">
+          <span className="text-2xl font-black tracking-[0.12em] text-white">
+            AVANZIT
+          </span>
         </div>
       </header>
 
