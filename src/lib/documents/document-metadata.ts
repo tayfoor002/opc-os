@@ -266,11 +266,18 @@ function metadataFromReferenceColumn(
     const rightBoundary = revisionHeader
       ? revisionHeader.x - 2
       : header.x + Math.max(220, header.width * 4);
+    // The header label is centered inside the first cell, while the
+    // reference value is left-aligned. Keep the complete first column
+    // instead of treating the header text position as the cell boundary.
+    const leftBoundary = Math.max(
+      0,
+      header.x - Math.max(80, header.width * 1.8),
+    );
     const columnItems = items.filter(
       (item) =>
         item.y < header.y - 2 &&
         item.y >= header.y - 190 &&
-        item.x >= header.x - 12 &&
+        item.x >= leftBoundary &&
         item.x < rightBoundary &&
         item.text.trim(),
     );
@@ -375,6 +382,9 @@ function titleFromCover(
 ) {
   const excluded =
     /HISTORIQUE DE MODIFICATION|REFERENCE|R[ÉE]VISION|VERSION|ALSTOM|AVANZIT|ONCF|PAGE\s+\d/i;
+  const historyHeading = rows.find((row) =>
+    normalizeSearch(row.text).includes("HISTORIQUE DE"),
+  );
   const candidates = rows.filter((row) => {
     const normalized = normalizeSearch(row.text);
     const center = row.x + row.width / 2;
@@ -384,6 +394,9 @@ function titleFromCover(
       row.y >= pageHeight * 0.2 &&
       row.y <= pageHeight * 0.78 &&
       Math.abs(center - pageWidth / 2) <= pageWidth * 0.32 &&
+      (!historyHeading ||
+        (row.y > historyHeading.y + 20 &&
+          row.y <= historyHeading.y + 160)) &&
       !excluded.test(normalized) &&
       !findReference(row.text)
     );
@@ -400,9 +413,13 @@ function titleFromCover(
       const leftCenter = left.x + left.width / 2;
       const rightCenter = right.x + right.width / 2;
       const leftScore =
-        left.height * 4 - Math.abs(leftCenter - pageWidth / 2) / 20;
+        left.height * 4 -
+        Math.abs(leftCenter - pageWidth / 2) / 20 -
+        (historyHeading ? Math.abs(left.y - historyHeading.y) / 30 : 0);
       const rightScore =
-        right.height * 4 - Math.abs(rightCenter - pageWidth / 2) / 20;
+        right.height * 4 -
+        Math.abs(rightCenter - pageWidth / 2) / 20 -
+        (historyHeading ? Math.abs(right.y - historyHeading.y) / 30 : 0);
       return rightScore - leftScore;
     })[0];
   const titleRows = prominent
