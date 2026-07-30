@@ -4,7 +4,13 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Loader2, RefreshCcw } from "lucide-react";
 
-import { synchronizeExistingDocumentMetadata } from "@/app/documents/actions";
+import {
+  applySynchronizedDocumentMetadata,
+  findProcedureRegisterTitle,
+} from "@/app/documents/actions";
+import { inferDocumentMetadata } from "@/lib/documents/document-metadata";
+import { getDocumentStoragePathCandidates } from "@/lib/documents/storage";
+import { createClient } from "@/lib/supabase/client";
 
 type Props = {
   documentIds: string[];
@@ -18,27 +24,91 @@ export function DocumentMetadataSync({ documentIds }: Props) {
   function synchronize() {
     setMessage("");
     startTransition(async () => {
+      const supabase = createClient();
+      const { data: documents, error: queryError } = await supabase
+        .from("documents")
+        .select("id,project_id,file_url,reference,revision,title")
+        .in("id", documentIds);
+      if (queryError) {
+        setMessage(`Chargement impossible : ${queryError.message}`);
+        return;
+      }
       let scanned = 0;
       let updated = 0;
       let skipped = 0;
       let failed = 0;
 
-      for (let index = 0; index < documentIds.length; index += 3) {
+      const synchronizeDocument = async (
+        document: NonNullable<typeof documents>[number],
+      ) => {
+        if (!document.file_url) {
+          return "skipped" as const;
+        }
+        let storedPdf: Blob | null = null;
+        for (const candidate of getDocumentStoragePathCandidates(
+          document.file_url,
+        )) {
+          const download = await supabase.storage
+            .from("documents")
+            .download(candidate);
+          if (!download.error && download.data) {
+            storedPdf = download.data;
+            break;
+          }
+        }
+        if (!storedPdf) {
+          return "skipped" as const;
+        }
+        const inference = await inferDocumentMetadata(
+          new File([storedPdf], "document.pdf", {
+            type: "application/pdf",
+          }),
+        );
+        const reference = inference.values.reference?.trim();
+        const revision = inference.values.revision?.trim();
+        if (!reference || !revision) {
+          return "skipped" as const;
+        }
+        const registerTitle = await findProcedureRegisterTitle(
+          document.project_id,
+          reference,
+        );
+        const title =
+          registerTitle.success && registerTitle.title
+            ? registerTitle.title
+            : inference.values.title?.trim() || document.title;
+        if (
+          reference === document.reference &&
+          revision === document.revision &&
+          title === document.title
+        ) {
+          return "unchanged" as const;
+        }
+        const update = await applySynchronizedDocumentMetadata(document.id, {
+          reference,
+          revision,
+          title,
+        });
+        return update.success ? ("updated" as const) : ("failed" as const);
+      };
+
+      for (let index = 0; index < (documents ?? []).length; index += 2) {
         const results = await Promise.all(
-          documentIds
-            .slice(index, index + 3)
-            .map((documentId) =>
-              synchronizeExistingDocumentMetadata(documentId),
-            ),
+          (documents ?? [])
+            .slice(index, index + 2)
+            .map(async (document) => {
+              try {
+                return await synchronizeDocument(document);
+              } catch {
+                return "failed" as const;
+              }
+            }),
         );
         for (const result of results) {
-          if (!result.success) {
-            failed += 1;
-            continue;
-          }
-          if (result.scanned) scanned += 1;
-          if (result.updated) updated += 1;
-          if (result.skipped) skipped += 1;
+          if (result !== "skipped") scanned += 1;
+          if (result === "updated") updated += 1;
+          if (result === "skipped") skipped += 1;
+          if (result === "failed") failed += 1;
         }
       }
       setMessage(

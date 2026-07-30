@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getDocumentRelationOptions } from "@/lib/documents/queries";
-import { inferDocumentMetadata } from "@/lib/documents/document-metadata";
 import { comparePdfVersions } from "@/lib/documents/pdf-version-comparison";
 import { getDocumentStoragePathCandidates } from "@/lib/documents/storage";
 import type {
@@ -529,91 +528,40 @@ export async function findProcedureRegisterTitle(
   return { success: true, title: null };
 }
 
-export async function synchronizeExistingDocumentMetadata(
+export async function applySynchronizedDocumentMetadata(
   documentId: string,
-): Promise<
-  | { success: true; scanned: boolean; updated: boolean; skipped: boolean }
-  | { success: false; error: string }
-> {
+  values: { reference: string; revision: string; title: string },
+): Promise<DocumentActionResult> {
   if (!documentIdSchema.safeParse(documentId).success) {
     return { success: false, error: "Identifiant de document invalide." };
   }
+  const parsed = z
+    .object({
+      reference: z.string().trim().min(1).max(120),
+      revision: z.string().trim().min(1).max(50),
+      title: z.string().trim().min(1).max(250),
+    })
+    .safeParse(values);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: "Les métadonnées détectées sont invalides.",
+    };
+  }
   const supabase = await createClient();
-  const { data: document, error } = await supabase
+  const { error } = await supabase
     .from("documents")
-    .select("id,project_id,file_url,reference,revision,title")
-    .eq("id", documentId)
-    .maybeSingle();
+    .update(parsed.data)
+    .eq("id", documentId);
   if (error) {
     return {
       success: false,
-      error: `Impossible de charger le document : ${error.message}`,
+      error: `Impossible de corriger le document : ${error.message}`,
     };
   }
-  if (!document?.file_url) {
-    return { success: true, scanned: false, updated: false, skipped: true };
-  }
-  const storage = supabase.storage.from("documents");
-  let storedPdf: Blob | null = null;
-  for (const candidate of getDocumentStoragePathCandidates(document.file_url)) {
-    const download = await storage.download(candidate);
-    if (!download.error && download.data) {
-      storedPdf = download.data;
-      break;
-    }
-  }
-  if (!storedPdf) {
-    return { success: true, scanned: false, updated: false, skipped: true };
-  }
-
-  try {
-    const inference = await inferDocumentMetadata(
-      new File([storedPdf], "document.pdf", {
-        type: "application/pdf",
-      }),
-    );
-    const reference = inference.values.reference?.trim() || null;
-    const revision = inference.values.revision?.trim() || null;
-    if (!reference || !revision) {
-      return { success: true, scanned: true, updated: false, skipped: true };
-    }
-    const registerTitle = await findProcedureRegisterTitle(
-      document.project_id,
-      reference,
-    );
-    const title =
-      registerTitle.success && registerTitle.title
-        ? registerTitle.title
-        : inference.values.title?.trim() || document.title;
-    if (
-      reference === document.reference &&
-      revision === document.revision &&
-      title === document.title
-    ) {
-      return { success: true, scanned: true, updated: false, skipped: false };
-    }
-    const { error: updateError } = await supabase
-      .from("documents")
-      .update({ reference, revision, title })
-      .eq("id", document.id);
-    if (updateError) {
-      return {
-        success: false,
-        error: `Impossible de corriger ${document.title} : ${updateError.message}`,
-      };
-    }
-    revalidatePath(`/documents/${document.id}`);
-    revalidatePath("/documents");
-    return { success: true, scanned: true, updated: true, skipped: false };
-  } catch (syncError) {
-    return {
-      success: false,
-      error:
-        syncError instanceof Error
-          ? syncError.message
-          : "Analyse PDF impossible.",
-    };
-  }
+  revalidatePath(`/documents/${documentId}`);
+  revalidatePath("/documents");
+  return { success: true };
 }
 
 async function validateRelatedEntity(
