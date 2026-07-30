@@ -172,7 +172,154 @@ function groupPositionedText(items: PositionedPdfText[]): PdfTextRow[] {
     .sort((left, right) => right.y - left.y);
 }
 
-function metadataFromModificationHistory(rows: PdfTextRow[]) {
+function findReferenceInColumnText(value: string) {
+  const compact = value
+    .toUpperCase()
+    .replace(/[–—_]/g, "-")
+    .replace(/\s+/g, "");
+  const knownReference = compact.match(
+      /SI1-T-EF-[A-Z0-9]{2,8}-(?:PRQ|PRO|PLC|PLN|PV|PVI|ICP|NDC)-[A-Z0-9]{3,6}/,
+    )?.[0];
+  if (knownReference) return knownReference;
+  const direct = findReference(value);
+  if (!direct) return "";
+  const parts = direct.split("-");
+  return parts.length >= 6 &&
+    !/^(?:PRQ|PRO|PLC|PLN|PV|PVI|ICP|NDC)$/.test(parts.at(-1) ?? "")
+    ? direct
+    : "";
+}
+
+function metadataFromReferenceColumn(
+  items: PositionedPdfText[],
+  rows: PdfTextRow[],
+) {
+  const historyHeading = rows.find((row) =>
+    normalizeSearch(row.text).includes("HISTORIQUE DE MODIFICATION"),
+  );
+  const directHeaders = items.filter((item) => {
+    const normalized = normalizeSearch(item.text).replace(/[^A-Z]/g, "");
+    return (
+      (normalized === "REFERENCE" ||
+        normalized === "REFERENCEDOCUMENT" ||
+        normalized === "REF") &&
+      (!historyHeading ||
+        (item.y < historyHeading.y && item.y >= historyHeading.y - 260))
+    );
+  });
+  const fragmentedHeaders: PositionedPdfText[] = [];
+  for (const row of rows) {
+    if (
+      historyHeading &&
+      (row.y >= historyHeading.y || row.y < historyHeading.y - 260)
+    ) {
+      continue;
+    }
+    const rowItems = items
+      .filter((item) => Math.abs(item.y - row.y) <= 3 && item.text.trim())
+      .sort((left, right) => left.x - right.x);
+    for (let start = 0; start < rowItems.length; start += 1) {
+      let combined = "";
+      for (
+        let end = start;
+        end < Math.min(rowItems.length, start + 12);
+        end += 1
+      ) {
+        combined += rowItems[end].text;
+        const normalized = normalizeSearch(combined).replace(/[^A-Z]/g, "");
+        if (normalized === "REFERENCE" || normalized === "REFERENCEDOCUMENT") {
+          const first = rowItems[start];
+          const last = rowItems[end];
+          fragmentedHeaders.push({
+            text: combined,
+            x: first.x,
+            y: row.y,
+            width: last.x + last.width - first.x,
+            height: Math.max(
+              ...rowItems
+                .slice(start, end + 1)
+                .map(({ height }) => height),
+            ),
+          });
+          break;
+        }
+        if (!"REFERENCEDOCUMENT".startsWith(normalized)) {
+          break;
+        }
+      }
+    }
+  }
+  const possibleHeaders = [...directHeaders, ...fragmentedHeaders];
+
+  for (const header of possibleHeaders.sort((left, right) => right.y - left.y)) {
+    const sameHeaderRow = items
+      .filter(
+        (item) =>
+          Math.abs(item.y - header.y) <= 6 &&
+          item.x > header.x + Math.max(header.width, 8),
+      )
+      .sort((left, right) => left.x - right.x);
+    const revisionHeader =
+      sameHeaderRow.find((item) =>
+        /REVISION|VERSION|INDICE/.test(normalizeSearch(item.text)),
+      ) ?? sameHeaderRow[0];
+    const rightBoundary = revisionHeader
+      ? revisionHeader.x - 2
+      : header.x + Math.max(220, header.width * 4);
+    const columnItems = items.filter(
+      (item) =>
+        item.y < header.y - 2 &&
+        item.y >= header.y - 190 &&
+        item.x >= header.x - 12 &&
+        item.x < rightBoundary &&
+        item.text.trim(),
+    );
+    const columnRows = groupPositionedText(columnItems);
+
+    for (let index = 0; index < columnRows.length; index += 1) {
+      const fragments = columnRows
+        .slice(index, index + 3)
+        .map(({ text }) => text);
+      for (let length = 1; length <= fragments.length; length += 1) {
+        const combined = fragments.slice(0, length).join("");
+        const reference = findReferenceInColumnText(combined);
+        if (!reference) continue;
+        const referenceY = columnRows[index].y;
+        const revisionItems = items.filter(
+          (item) =>
+            revisionHeader &&
+            item.y < revisionHeader.y - 2 &&
+            item.y >= revisionHeader.y - 190 &&
+            item.x >= revisionHeader.x - 12 &&
+            Math.abs(item.y - referenceY) <= 18 &&
+            item.text.trim(),
+        );
+        const revisionText = revisionItems
+          .sort((left, right) => left.x - right.x)
+          .map(({ text }) => text)
+          .join(" ");
+        return {
+          reference,
+          revision:
+            findRevision(revisionText) ||
+            revisionFromHistoryRow(revisionText, reference),
+        };
+      }
+    }
+  }
+
+  return { reference: "", revision: "" };
+}
+
+function metadataFromModificationHistory(
+  items: PositionedPdfText[],
+  rows: PdfTextRow[],
+) {
+  const columnMetadata = metadataFromReferenceColumn(items, rows);
+  if (columnMetadata.reference) {
+    return columnMetadata;
+  }
+
   const historyIndex = rows.findIndex((row) =>
     normalizeSearch(row.text).includes("HISTORIQUE DE MODIFICATION"),
   );
@@ -449,6 +596,7 @@ async function readPdf(file: File) {
     text: pages.join("\n"),
     info: (metadata?.info ?? {}) as PdfInfo,
     firstPageRows: groupPositionedText(firstPageItems),
+    firstPageItems,
     firstPageWidth,
     firstPageHeight,
   };
@@ -461,6 +609,7 @@ export async function inferDocumentMetadata(
   let pdfText = "";
   let pdfInfo: PdfInfo = {};
   let firstPageRows: PdfTextRow[] = [];
+  let firstPageItems: PositionedPdfText[] = [];
   let firstPageWidth = 0;
   let firstPageHeight = 0;
   let warning: string | null = null;
@@ -470,6 +619,7 @@ export async function inferDocumentMetadata(
     pdfText = pdf.text;
     pdfInfo = pdf.info;
     firstPageRows = pdf.firstPageRows;
+    firstPageItems = pdf.firstPageItems;
     firstPageWidth = pdf.firstPageWidth;
     firstPageHeight = pdf.firstPageHeight;
   } catch {
@@ -480,7 +630,10 @@ export async function inferDocumentMetadata(
   const source = `${fileStem}\n${pdfInfo.Title ?? ""}\n${
     pdfInfo.Subject ?? ""
   }\n${pdfText}`;
-  const historyMetadata = metadataFromModificationHistory(firstPageRows);
+  const historyMetadata = metadataFromModificationHistory(
+    firstPageItems,
+    firstPageRows,
+  );
   const reference = historyMetadata.reference || findReference(source);
   const revision = historyMetadata.revision || findRevision(source);
   const documentType = inferDocumentType(reference, source);

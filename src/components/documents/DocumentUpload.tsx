@@ -169,11 +169,7 @@ export function DocumentUpload({
       await Promise.all(
         newItems.map(async (item) => {
           const inference = await inferDocumentMetadata(item.file);
-          if (
-            !inference.titleDetectedFromCover &&
-            context.values.project_id &&
-            inference.values.reference
-          ) {
+          if (context.values.project_id && inference.values.reference) {
             const registerMatch = await findProcedureRegisterTitle(
               context.values.project_id,
               inference.values.reference,
@@ -185,7 +181,7 @@ export function DocumentUpload({
               ];
               inference.warning = inference.warning
                 ? `${inference.warning} Le titre a été confirmé dans le tableau de suivi des procédures.`
-                : "Le titre a été confirmé depuis la référence exacte du tableau de suivi des procédures.";
+                : "La référence a été lue dans l’historique de modification et le titre correspondant a été récupéré dans le tableau de suivi des procédures.";
             }
           }
           setItems((current) =>
