@@ -1,13 +1,21 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useRouter } from "next/navigation";
-import { FileText, Upload, X } from "lucide-react";
+import {
+  CheckCircle2,
+  FileSearch,
+  FileText,
+  Loader2,
+  Upload,
+  X,
+} from "lucide-react";
 
 import { uploadDocument } from "@/app/documents/actions";
 import { DocumentForm } from "@/components/documents/DocumentForm";
 import { Button } from "@/components/ui/button";
+import { inferDocumentMetadata } from "@/lib/documents/document-metadata";
 import type {
   DocumentEditValues,
   ProjectOption,
@@ -41,14 +49,37 @@ export function DocumentUpload({
   onSuccess,
 }: DocumentUploadProps) {
   const router = useRouter();
+  const analysisIdRef = useRef(0);
   const [file, setFile] = useState<File | null>(null);
+  const [initialValues, setInitialValues] = useState(EMPTY_DOCUMENT);
+  const [analysisVersion, setAnalysisVersion] = useState(0);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [detectedFields, setDetectedFields] = useState<string[]>([]);
+  const [analysisWarning, setAnalysisWarning] = useState<string | null>(null);
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const selectedFile = acceptedFiles[0];
     if (!selectedFile) {
       return;
     }
     setFile(selectedFile);
+    const analysisId = analysisIdRef.current + 1;
+    analysisIdRef.current = analysisId;
+    setIsAnalyzing(true);
+    setDetectedFields([]);
+    setAnalysisWarning(null);
+
+    const inference = await inferDocumentMetadata(selectedFile);
+    if (analysisIdRef.current !== analysisId) return;
+    setInitialValues((current) => ({
+      ...EMPTY_DOCUMENT,
+      project_id: current.project_id,
+      ...inference.values,
+    }));
+    setDetectedFields(inference.detectedFields);
+    setAnalysisWarning(inference.warning);
+    setAnalysisVersion((current) => current + 1);
+    setIsAnalyzing(false);
   }, []);
 
   const {
@@ -78,14 +109,29 @@ export function DocumentUpload({
   }
 
   function handleSuccess() {
+    analysisIdRef.current += 1;
     setFile(null);
+    setInitialValues(EMPTY_DOCUMENT);
+    setDetectedFields([]);
+    setAnalysisWarning(null);
     router.refresh();
     onSuccess?.();
   }
 
+  function removeFile() {
+    analysisIdRef.current += 1;
+    setFile(null);
+    setInitialValues(EMPTY_DOCUMENT);
+    setDetectedFields([]);
+    setAnalysisWarning(null);
+    setIsAnalyzing(false);
+    setAnalysisVersion((current) => current + 1);
+  }
+
   return (
     <DocumentForm
-      initialValues={EMPTY_DOCUMENT}
+      key={`${file?.name ?? "empty"}-${analysisVersion}`}
+      initialValues={initialValues}
       projects={projects}
       initialOptions={{ zones: [], phases: [], activities: [] }}
       onCancel={() => onSuccess?.()}
@@ -93,7 +139,7 @@ export function DocumentUpload({
       onSubmitForm={submitDocument}
       submitLabel="Créer le document"
       submittingLabel="Création…"
-      canSubmit={Boolean(file)}
+      canSubmit={Boolean(file) && !isAnalyzing}
     >
       <div className="space-y-2">
         <p className="text-sm font-semibold">Fichier PDF</p>
@@ -129,7 +175,7 @@ export function DocumentUpload({
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => setFile(null)}
+              onClick={removeFile}
               aria-label="Retirer le fichier"
             >
               <X className="size-4" />
@@ -140,6 +186,35 @@ export function DocumentUpload({
         {fileRejections.length > 0 ? (
           <p className="text-sm text-destructive">
             Seuls les fichiers PDF sont acceptés.
+          </p>
+        ) : null}
+
+        {isAnalyzing ? (
+          <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900">
+            <Loader2 className="size-5 shrink-0 animate-spin" />
+            Analyse du PDF et préremplissage des informations…
+          </div>
+        ) : detectedFields.length ? (
+          <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950">
+            <CheckCircle2 className="mt-0.5 size-5 shrink-0" />
+            <div>
+              <p className="font-black">Informations détectées automatiquement</p>
+              <p className="mt-1">
+                {detectedFields.join(", ")}. Vérifie uniquement les champs
+                ambigus avant de créer le document.
+              </p>
+            </div>
+          </div>
+        ) : file ? (
+          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            <FileSearch className="size-5 shrink-0" />
+            Aucun champ fiable n’a été détecté automatiquement.
+          </div>
+        ) : null}
+
+        {analysisWarning ? (
+          <p className="text-xs font-semibold text-amber-700">
+            {analysisWarning}
           </p>
         ) : null}
       </div>
