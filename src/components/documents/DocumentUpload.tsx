@@ -23,6 +23,7 @@ import {
 import { DocumentForm } from "@/components/documents/DocumentForm";
 import { Button } from "@/components/ui/button";
 import { inferDocumentMetadata } from "@/lib/documents/document-metadata";
+import { createClient } from "@/lib/supabase/client";
 import type {
   DocumentEditValues,
   DocumentRelationOptions,
@@ -69,6 +70,15 @@ const EMPTY_DOCUMENT: DocumentEditValues = {
   phase_id: "",
   activity_id: "",
 };
+
+const MAX_DOCUMENT_SIZE = 50 * 1024 * 1024;
+
+function storageFileName(fileName: string) {
+  return fileName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]/g, "-");
+}
 
 function normalize(value: string | null) {
   return (value ?? "")
@@ -220,6 +230,7 @@ export function DocumentUpload({
     onDrop,
     multiple: true,
     maxFiles: 20,
+    maxSize: MAX_DOCUMENT_SIZE,
     accept: {
       "application/pdf": [".pdf"],
     },
@@ -254,6 +265,7 @@ export function DocumentUpload({
     );
 
     startSaving(async () => {
+      const supabase = createClient();
       const results: Array<{
         id: string;
         result: Awaited<ReturnType<typeof uploadDocument>>;
@@ -274,14 +286,41 @@ export function DocumentUpload({
       });
 
       for (const item of orderedItems) {
+        const documentId = crypto.randomUUID();
+        const storagePath = `${
+          item.values.project_id
+        }/${documentId}/${storageFileName(item.file.name)}`;
+        const { error: storageError } = await supabase.storage
+          .from("documents")
+          .upload(storagePath, item.file, {
+            contentType: "application/pdf",
+            upsert: false,
+          });
+        if (storageError) {
+          results.push({
+            id: item.id,
+            result: {
+              success: false,
+              error: `Impossible d’envoyer le PDF vers Supabase : ${storageError.message}`,
+            },
+          });
+          continue;
+        }
+
         const formData = new FormData();
         Object.entries(item.values).forEach(([key, value]) => {
           formData.set(key, value);
         });
-        formData.set("file", item.file);
+        formData.set("storage_path", storagePath);
+        formData.set("file_name", item.file.name);
+        formData.set("file_type", "application/pdf");
+        const result = await uploadDocument(formData);
+        if (!result.success) {
+          await supabase.storage.from("documents").remove([storagePath]);
+        }
         results.push({
           id: item.id,
-          result: await uploadDocument(formData),
+          result,
         });
       }
 
@@ -347,8 +386,8 @@ export function DocumentUpload({
 
       {fileRejections.length > 0 ? (
         <p className="text-sm font-semibold text-destructive">
-          Certains fichiers ont été refusés : seuls les PDF sont acceptés,
-          avec un maximum de 20 fichiers.
+          Certains fichiers ont été refusés : seuls les PDF de 50 Mo maximum
+          sont acceptés, avec un maximum de 20 fichiers.
         </p>
       ) : null}
 

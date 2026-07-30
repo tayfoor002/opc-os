@@ -6,6 +6,7 @@ import { FileSpreadsheet, FolderOpen, Search } from "lucide-react";
 import { DocumentToolbar } from "./DocumentToolbar";
 import { DocumentTable } from "./DocumentTable";
 import { DocumentUpload } from "./DocumentUpload";
+import { DocumentMetadataSync } from "./DocumentMetadataSync";
 import { ProcedureRegister } from "./ProcedureRegister";
 
 import {
@@ -162,6 +163,11 @@ export function DocumentsView({ documents, projects }: Props) {
           <span className="self-center text-xs font-bold text-slate-500">
             {filteredDocuments.length} document(s) · plus récents en premier
           </span>
+        </div>
+        <div className="mt-3">
+          <DocumentMetadataSync
+            documentIds={documents.map((document) => document.id)}
+          />
         </div>
       </section>
 

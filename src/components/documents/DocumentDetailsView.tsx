@@ -238,7 +238,10 @@ export function DocumentDetailsView({
                 <p className="mt-2 text-sm text-[var(--opc-muted)]">
                   {access.error ?? "Le fichier PDF ne peut pas être affiché."}
                 </p>
-                <DocumentFileAttach documentId={document.id} />
+                <DocumentFileAttach
+                  documentId={document.id}
+                  projectId={document.project_id}
+                />
               </div>
             </div>
           )}

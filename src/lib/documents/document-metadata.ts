@@ -119,7 +119,9 @@ function findRevision(value: string) {
 
 function revisionRank(value: string) {
   const match = value.match(/\d+(?:[.,]\d+)?/);
-  return match ? Number(match[0].replace(",", ".")) : -1;
+  if (match) return Number(match[0].replace(",", "."));
+  const letter = value.trim().toUpperCase().match(/^[A-Z]$/);
+  return letter ? letter[0].charCodeAt(0) - 64 : -1;
 }
 
 function revisionFromHistoryRow(value: string, reference: string) {
@@ -263,6 +265,20 @@ function metadataFromReferenceColumn(
       sameHeaderRow.find((item) =>
         /REVISION|VERSION|INDICE/.test(normalizeSearch(item.text)),
       ) ?? sameHeaderRow[0];
+    const revisionHeaderIndex = revisionHeader
+      ? sameHeaderRow.indexOf(revisionHeader)
+      : -1;
+    const nextHeader =
+      revisionHeaderIndex >= 0
+        ? sameHeaderRow[revisionHeaderIndex + 1]
+        : undefined;
+    const revisionCenter = revisionHeader
+      ? revisionHeader.x + revisionHeader.width / 2
+      : 0;
+    const revisionRightBoundary =
+      revisionHeader && nextHeader
+        ? (revisionCenter + nextHeader.x + nextHeader.width / 2) / 2
+        : Number.POSITIVE_INFINITY;
     const rightBoundary = revisionHeader
       ? revisionHeader.x - 2
       : header.x + Math.max(220, header.width * 4);
@@ -282,6 +298,11 @@ function metadataFromReferenceColumn(
         item.text.trim(),
     );
     const columnRows = groupPositionedText(columnItems);
+    const detectedRows: Array<{
+      reference: string;
+      revision: string;
+      y: number;
+    }> = [];
 
     for (let index = 0; index < columnRows.length; index += 1) {
       const fragments = columnRows
@@ -297,7 +318,10 @@ function metadataFromReferenceColumn(
             revisionHeader &&
             item.y < revisionHeader.y - 2 &&
             item.y >= revisionHeader.y - 190 &&
-            item.x >= revisionHeader.x - 12 &&
+            item.x >=
+              revisionHeader.x -
+                Math.max(20, revisionHeader.width * 0.6) &&
+            item.x < revisionRightBoundary &&
             Math.abs(item.y - referenceY) <= 18 &&
             item.text.trim(),
         );
@@ -305,13 +329,25 @@ function metadataFromReferenceColumn(
           .sort((left, right) => left.x - right.x)
           .map(({ text }) => text)
           .join(" ");
-        return {
+        detectedRows.push({
           reference,
           revision:
             findRevision(revisionText) ||
             revisionFromHistoryRow(revisionText, reference),
-        };
+          y: referenceY,
+        });
+        break;
       }
+    }
+
+    if (detectedRows.length) {
+      return detectedRows.sort((left, right) => {
+        const revisionOrder =
+          revisionRank(right.revision) - revisionRank(left.revision);
+        // When revisions are equal or non-numeric, the lower row is the
+        // latest entry in the history table.
+        return revisionOrder || left.y - right.y;
+      })[0];
     }
   }
 

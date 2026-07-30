@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getDocumentRelationOptions } from "@/lib/documents/queries";
+import { inferDocumentMetadata } from "@/lib/documents/document-metadata";
 import { comparePdfVersions } from "@/lib/documents/pdf-version-comparison";
 import { getDocumentStoragePathCandidates } from "@/lib/documents/storage";
 import type {
@@ -145,15 +146,10 @@ export async function uploadDocument(
   formData: FormData,
 ): Promise<DocumentActionResult> {
   const supabase = await createClient();
-  const file = formData.get("file");
-
-  if (!(file instanceof File)) {
-    return { success: false, error: "Aucun fichier sélectionné." };
-  }
-
-  if (file.type !== "application/pdf") {
-    return { success: false, error: "Le fichier doit être un PDF." };
-  }
+  const fileEntry = formData.get("file");
+  const stagedStoragePath = formData.get("storage_path");
+  const stagedFileName = formData.get("file_name");
+  const stagedFileType = formData.get("file_type");
 
   const parsed = documentMetadataSchema.safeParse(
     Object.fromEntries(
@@ -186,6 +182,67 @@ export async function uploadDocument(
       error:
         "La zone, la phase ou l’activité ne correspond pas au projet sélectionné.",
     };
+  }
+
+  const storage = supabase.storage.from("documents");
+  let documentId = crypto.randomUUID();
+  let storagePath = "";
+  let file: File;
+  let requiresServerUpload = false;
+
+  if (fileEntry instanceof File) {
+    if (fileEntry.type !== "application/pdf") {
+      return { success: false, error: "Le fichier doit être un PDF." };
+    }
+    file = fileEntry;
+    storagePath = `${values.project_id}/${documentId}/${safeFileName(
+      file.name,
+    )}`;
+    requiresServerUpload = true;
+  } else if (
+    typeof stagedStoragePath === "string" &&
+    typeof stagedFileName === "string"
+  ) {
+    const pathParts = stagedStoragePath.split("/");
+    const stagedDocumentId = pathParts[1] ?? "";
+    const validStagedPath =
+      pathParts.length >= 3 &&
+      pathParts[0] === values.project_id &&
+      documentIdSchema.safeParse(stagedDocumentId).success &&
+      !pathParts.some((part) => part === ".." || part === "");
+    if (!validStagedPath) {
+      return {
+        success: false,
+        error: "Le chemin temporaire du PDF est invalide.",
+      };
+    }
+
+    const { data: stagedFile, error: stagedFileError } =
+      await storage.download(stagedStoragePath);
+    if (stagedFileError || !stagedFile) {
+      return {
+        success: false,
+        error:
+          "Le PDF envoyé directement vers Supabase est introuvable : " +
+          (stagedFileError?.message ?? "fichier indisponible"),
+      };
+    }
+    const contentType =
+      typeof stagedFileType === "string" && stagedFileType
+        ? stagedFileType
+        : stagedFile.type;
+    if (contentType !== "application/pdf") {
+      await storage.remove([stagedStoragePath]);
+      return { success: false, error: "Le fichier doit être un PDF." };
+    }
+
+    documentId = stagedDocumentId;
+    storagePath = stagedStoragePath;
+    file = new File([stagedFile], stagedFileName, {
+      type: "application/pdf",
+    });
+  } else {
+    return { success: false, error: "Aucun fichier sélectionné." };
   }
 
   const normalizedReference = normalizeDocumentReference(values.reference);
@@ -286,16 +343,12 @@ export async function uploadDocument(
     }
   }
 
-  const documentId = crypto.randomUUID();
-  const storagePath = `${values.project_id}/${documentId}/${safeFileName(
-    file.name,
-  )}`;
-  const storage = supabase.storage.from("documents");
-
-  const { error: uploadError } = await storage.upload(storagePath, file, {
-      contentType: file.type,
-      upsert: false,
-    });
+  const { error: uploadError } = requiresServerUpload
+    ? await storage.upload(storagePath, file, {
+        contentType: file.type,
+        upsert: false,
+      })
+    : { error: null };
 
   if (uploadError) {
     return {
@@ -476,6 +529,93 @@ export async function findProcedureRegisterTitle(
   return { success: true, title: null };
 }
 
+export async function synchronizeExistingDocumentMetadata(
+  documentId: string,
+): Promise<
+  | { success: true; scanned: boolean; updated: boolean; skipped: boolean }
+  | { success: false; error: string }
+> {
+  if (!documentIdSchema.safeParse(documentId).success) {
+    return { success: false, error: "Identifiant de document invalide." };
+  }
+  const supabase = await createClient();
+  const { data: document, error } = await supabase
+    .from("documents")
+    .select("id,project_id,file_url,reference,revision,title")
+    .eq("id", documentId)
+    .maybeSingle();
+  if (error) {
+    return {
+      success: false,
+      error: `Impossible de charger le document : ${error.message}`,
+    };
+  }
+  if (!document?.file_url) {
+    return { success: true, scanned: false, updated: false, skipped: true };
+  }
+  const storage = supabase.storage.from("documents");
+  let storedPdf: Blob | null = null;
+  for (const candidate of getDocumentStoragePathCandidates(document.file_url)) {
+    const download = await storage.download(candidate);
+    if (!download.error && download.data) {
+      storedPdf = download.data;
+      break;
+    }
+  }
+  if (!storedPdf) {
+    return { success: true, scanned: false, updated: false, skipped: true };
+  }
+
+  try {
+    const inference = await inferDocumentMetadata(
+      new File([storedPdf], "document.pdf", {
+        type: "application/pdf",
+      }),
+    );
+    const reference = inference.values.reference?.trim() || null;
+    const revision = inference.values.revision?.trim() || null;
+    if (!reference || !revision) {
+      return { success: true, scanned: true, updated: false, skipped: true };
+    }
+    const registerTitle = await findProcedureRegisterTitle(
+      document.project_id,
+      reference,
+    );
+    const title =
+      registerTitle.success && registerTitle.title
+        ? registerTitle.title
+        : inference.values.title?.trim() || document.title;
+    if (
+      reference === document.reference &&
+      revision === document.revision &&
+      title === document.title
+    ) {
+      return { success: true, scanned: true, updated: false, skipped: false };
+    }
+    const { error: updateError } = await supabase
+      .from("documents")
+      .update({ reference, revision, title })
+      .eq("id", document.id);
+    if (updateError) {
+      return {
+        success: false,
+        error: `Impossible de corriger ${document.title} : ${updateError.message}`,
+      };
+    }
+    revalidatePath(`/documents/${document.id}`);
+    revalidatePath("/documents");
+    return { success: true, scanned: true, updated: true, skipped: false };
+  } catch (syncError) {
+    return {
+      success: false,
+      error:
+        syncError instanceof Error
+          ? syncError.message
+          : "Analyse PDF impossible.",
+    };
+  }
+}
+
 async function validateRelatedEntity(
   table: "zones" | "phases" | "activities",
   id: string | null,
@@ -562,13 +702,7 @@ export async function attachDocumentFile(
   }
 
   const file = formData.get("file");
-  if (!(file instanceof File)) {
-    return { success: false, error: "Sélectionne un fichier PDF." };
-  }
-
-  if (file.type !== "application/pdf") {
-    return { success: false, error: "Le fichier doit être un PDF." };
-  }
+  const stagedStoragePath = formData.get("storage_path");
 
   const supabase = await createClient();
   const { data: document, error: documentError } = await supabase
@@ -588,14 +722,33 @@ export async function attachDocumentFile(
     return { success: false, error: "Ce document n’existe plus." };
   }
 
-  const storagePath = `${
-    document.project_id
-  }/${documentId}/${crypto.randomUUID()}-${safeFileName(file.name)}`;
   const storage = supabase.storage.from("documents");
-  const { error: uploadError } = await storage.upload(storagePath, file, {
-    contentType: file.type,
-    upsert: false,
-  });
+  let storagePath = "";
+  let requiresServerUpload = false;
+  if (file instanceof File) {
+    if (file.type !== "application/pdf") {
+      return { success: false, error: "Le fichier doit être un PDF." };
+    }
+    storagePath = `${
+      document.project_id
+    }/${documentId}/${crypto.randomUUID()}-${safeFileName(file.name)}`;
+    requiresServerUpload = true;
+  } else if (
+    typeof stagedStoragePath === "string" &&
+    stagedStoragePath.startsWith(`${document.project_id}/${documentId}/`) &&
+    !stagedStoragePath.split("/").some((part) => !part || part === "..")
+  ) {
+    storagePath = stagedStoragePath;
+  } else {
+    return { success: false, error: "Sélectionne un fichier PDF." };
+  }
+
+  const { error: uploadError } = requiresServerUpload
+    ? await storage.upload(storagePath, file as File, {
+        contentType: "application/pdf",
+        upsert: false,
+      })
+    : { error: null };
 
   if (uploadError) {
     return {

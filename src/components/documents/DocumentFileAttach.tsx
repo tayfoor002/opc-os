@@ -7,13 +7,16 @@ import { FileText, Loader2, Upload, X } from "lucide-react";
 
 import { attachDocumentFile } from "@/app/documents/actions";
 import { Button } from "@/components/ui/button";
+import { createClient } from "@/lib/supabase/client";
 
 type DocumentFileAttachProps = {
   documentId: string;
+  projectId: string;
 };
 
 export function DocumentFileAttach({
   documentId,
+  projectId,
 }: DocumentFileAttachProps) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
@@ -38,6 +41,7 @@ export function DocumentFileAttach({
     onDrop,
     multiple: false,
     maxFiles: 1,
+    maxSize: 50 * 1024 * 1024,
     accept: {
       "application/pdf": [".pdf"],
     },
@@ -49,13 +53,31 @@ export function DocumentFileAttach({
       return;
     }
 
-    const formData = new FormData();
-    formData.set("file", file);
     setError("");
 
     startTransition(async () => {
+      const storagePath = `${projectId}/${documentId}/${
+        crypto.randomUUID()
+      }-${file.name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9._-]/g, "-")}`;
+      const supabase = createClient();
+      const { error: storageError } = await supabase.storage
+        .from("documents")
+        .upload(storagePath, file, {
+          contentType: "application/pdf",
+          upsert: false,
+        });
+      if (storageError) {
+        setError(`Impossible d’envoyer le PDF : ${storageError.message}`);
+        return;
+      }
+      const formData = new FormData();
+      formData.set("storage_path", storagePath);
       const result = await attachDocumentFile(documentId, formData);
       if (!result.success) {
+        await supabase.storage.from("documents").remove([storagePath]);
         setError(result.error);
         return;
       }
@@ -112,7 +134,7 @@ export function DocumentFileAttach({
 
       {fileRejections.length > 0 ? (
         <p className="mt-2 text-sm text-destructive">
-          Seuls les fichiers PDF sont acceptés.
+          Seuls les fichiers PDF de 50 Mo maximum sont acceptés.
         </p>
       ) : null}
 
