@@ -31,6 +31,12 @@ function usefulLines(lines: string[]): string[] {
 }
 
 async function extractPdfText(bytes: Uint8Array): Promise<PdfTextSnapshot> {
+  const canvas = await import("@napi-rs/canvas");
+  const runtime = globalThis as unknown as Record<string, unknown>;
+  runtime.DOMMatrix ??= canvas.DOMMatrix;
+  runtime.ImageData ??= canvas.ImageData;
+  runtime.Path2D ??= canvas.Path2D;
+
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const pdf = await pdfjs.getDocument({
     data: bytes,
