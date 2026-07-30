@@ -37,6 +37,11 @@ async function extractPdfText(bytes: Uint8Array): Promise<PdfTextSnapshot> {
   runtime.ImageData ??= canvas.ImageData;
   runtime.Path2D ??= canvas.Path2D;
 
+  const pdfjsWorker = await import(
+    "pdfjs-dist/legacy/build/pdf.worker.mjs"
+  );
+  runtime.pdfjsWorker ??= pdfjsWorker;
+
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const pdf = await pdfjs.getDocument({
     data: bytes,
