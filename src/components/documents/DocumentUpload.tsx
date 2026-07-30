@@ -1,29 +1,54 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState, useTransition } from "react";
 import { useDropzone } from "react-dropzone";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   FileSearch,
   FileText,
   Loader2,
+  Save,
   Upload,
   X,
 } from "lucide-react";
 
-import { uploadDocument } from "@/app/documents/actions";
+import {
+  loadDocumentRelationOptions,
+  uploadDocument,
+} from "@/app/documents/actions";
 import { DocumentForm } from "@/components/documents/DocumentForm";
 import { Button } from "@/components/ui/button";
 import { inferDocumentMetadata } from "@/lib/documents/document-metadata";
 import type {
   DocumentEditValues,
+  DocumentRelationOptions,
   ProjectOption,
 } from "@/lib/documents/types";
 
 type DocumentUploadProps = {
   projects: ProjectOption[];
   onSuccess?: () => void;
+};
+
+type UploadItem = {
+  id: string;
+  file: File;
+  values: DocumentEditValues;
+  options: DocumentRelationOptions;
+  formVersion: number;
+  state: "analyzing" | "ready" | "uploading" | "error";
+  detectedFields: string[];
+  warning: string | null;
+  error: string | null;
+};
+
+const EMPTY_OPTIONS: DocumentRelationOptions = {
+  zones: [],
+  phases: [],
+  activities: [],
 };
 
 const EMPTY_DOCUMENT: DocumentEditValues = {
@@ -44,43 +69,131 @@ const EMPTY_DOCUMENT: DocumentEditValues = {
   activity_id: "",
 };
 
+function normalize(value: string | null) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function findDefaultProject(projects: ProjectOption[]) {
+  return (
+    projects.find(
+      (project) =>
+        normalize(project.code) === "pdd" ||
+        normalize(project.name) === "pdd" ||
+        normalize(`${project.code ?? ""} ${project.name}`).includes("pdd"),
+    ) ??
+    (projects.length === 1 ? projects[0] : null)
+  );
+}
+
+async function getDefaultContext(projects: ProjectOption[]) {
+  const project = findDefaultProject(projects);
+  if (!project) {
+    return {
+      values: EMPTY_DOCUMENT,
+      options: EMPTY_OPTIONS,
+    };
+  }
+
+  const result = await loadDocumentRelationOptions(project.id);
+  if (!result.success) {
+    return {
+      values: { ...EMPTY_DOCUMENT, project_id: project.id },
+      options: EMPTY_OPTIONS,
+    };
+  }
+
+  const zone =
+    result.options.zones.find((item) =>
+      ["zone casa", "casa"].includes(normalize(item.name)),
+    ) ??
+    result.options.zones.find((item) =>
+      normalize(`${item.code ?? ""} ${item.name}`).includes("casa"),
+    ) ??
+    null;
+  const phasesForZone = zone
+    ? result.options.phases.filter((phase) => phase.zone_id === zone.id)
+    : result.options.phases;
+  const phase =
+    phasesForZone.find((item) =>
+      ["phase 1", "p1"].includes(normalize(item.name)),
+    ) ??
+    phasesForZone.find((item) =>
+      normalize(`${item.code ?? ""} ${item.name}`).includes("phase 1"),
+    ) ??
+    null;
+
+  return {
+    values: {
+      ...EMPTY_DOCUMENT,
+      project_id: project.id,
+      zone_id: zone?.id ?? "",
+      phase_id: phase?.id ?? "",
+    },
+    options: result.options,
+  };
+}
+
 export function DocumentUpload({
   projects,
   onSuccess,
 }: DocumentUploadProps) {
   const router = useRouter();
-  const analysisIdRef = useRef(0);
-  const [file, setFile] = useState<File | null>(null);
-  const [initialValues, setInitialValues] = useState(EMPTY_DOCUMENT);
-  const [analysisVersion, setAnalysisVersion] = useState(0);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [detectedFields, setDetectedFields] = useState<string[]>([]);
-  const [analysisWarning, setAnalysisWarning] = useState<string | null>(null);
+  const [items, setItems] = useState<UploadItem[]>([]);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [isSaving, startSaving] = useTransition();
 
-  const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    const selectedFile = acceptedFiles[0];
-    if (!selectedFile) {
-      return;
-    }
-    setFile(selectedFile);
-    const analysisId = analysisIdRef.current + 1;
-    analysisIdRef.current = analysisId;
-    setIsAnalyzing(true);
-    setDetectedFields([]);
-    setAnalysisWarning(null);
+  const onDrop = useCallback(
+    async (acceptedFiles: File[]) => {
+      if (!acceptedFiles.length) return;
+      setBatchError(null);
+      const context = await getDefaultContext(projects);
+      const newItems = acceptedFiles.map<UploadItem>((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        values: { ...context.values },
+        options: context.options,
+        formVersion: 0,
+        state: "analyzing",
+        detectedFields: [],
+        warning: null,
+        error: null,
+      }));
+      setItems((current) => [...current, ...newItems]);
 
-    const inference = await inferDocumentMetadata(selectedFile);
-    if (analysisIdRef.current !== analysisId) return;
-    setInitialValues((current) => ({
-      ...EMPTY_DOCUMENT,
-      project_id: current.project_id,
-      ...inference.values,
-    }));
-    setDetectedFields(inference.detectedFields);
-    setAnalysisWarning(inference.warning);
-    setAnalysisVersion((current) => current + 1);
-    setIsAnalyzing(false);
-  }, []);
+      await Promise.all(
+        newItems.map(async (item) => {
+          const inference = await inferDocumentMetadata(item.file);
+          setItems((current) =>
+            current.map((currentItem) =>
+              currentItem.id === item.id
+                ? {
+                    ...currentItem,
+                    values: {
+                      ...currentItem.values,
+                      ...inference.values,
+                      reference: (inference.values.reference ?? "").replace(
+                        /\s+/g,
+                        "",
+                      ),
+                    },
+                    formVersion: currentItem.formVersion + 1,
+                    state: "ready",
+                    detectedFields: inference.detectedFields,
+                    warning: inference.warning,
+                  }
+                : currentItem,
+            ),
+          );
+        }),
+      );
+    },
+    [projects],
+  );
 
   const {
     getRootProps,
@@ -89,135 +202,278 @@ export function DocumentUpload({
     fileRejections,
   } = useDropzone({
     onDrop,
-    multiple: false,
-    maxFiles: 1,
+    multiple: true,
+    maxFiles: 20,
     accept: {
       "application/pdf": [".pdf"],
     },
   });
 
-  async function submitDocument(formData: FormData) {
-    if (!file) {
-      return {
-        success: false as const,
-        error: "Sélectionne un fichier PDF.",
-      };
+  function removeItem(id: string) {
+    setItems((current) => current.filter((item) => item.id !== id));
+    setBatchError(null);
+  }
+
+  function updateItemValues(id: string, values: DocumentEditValues) {
+    setItems((current) =>
+      current.map((item) => (item.id === id ? { ...item, values } : item)),
+    );
+  }
+
+  function submitAll() {
+    const readyItems = items.filter(
+      (item) => item.state === "ready" || item.state === "error",
+    );
+    if (!readyItems.length || items.some((item) => item.state === "analyzing")) {
+      return;
     }
 
-    formData.set("file", file);
-    return uploadDocument(formData);
+    setBatchError(null);
+    setItems((current) =>
+      current.map((item) =>
+        readyItems.some((ready) => ready.id === item.id)
+          ? { ...item, state: "uploading", error: null }
+          : item,
+      ),
+    );
+
+    startSaving(async () => {
+      const results = await Promise.all(
+        readyItems.map(async (item) => {
+          const formData = new FormData();
+          Object.entries(item.values).forEach(([key, value]) => {
+            formData.set(key, value);
+          });
+          formData.set("file", item.file);
+          return {
+            id: item.id,
+            result: await uploadDocument(formData),
+          };
+        }),
+      );
+
+      const successfulIds = new Set(
+        results
+          .filter(({ result }) => result.success)
+          .map(({ id }) => id),
+      );
+      const failed = results.filter(({ result }) => !result.success);
+      setItems((current) =>
+        current
+          .filter((item) => !successfulIds.has(item.id))
+          .map((item) => {
+            const failure = failed.find(({ id }) => id === item.id);
+            return failure && !failure.result.success
+              ? {
+                  ...item,
+                  state: "error" as const,
+                  error: failure.result.error,
+                }
+              : item;
+          }),
+      );
+      router.refresh();
+
+      if (!failed.length) {
+        onSuccess?.();
+        return;
+      }
+      setBatchError(
+        `${successfulIds.size} document(s) créé(s), ${failed.length} en échec. Les fichiers en erreur restent affichés pour correction.`,
+      );
+    });
   }
 
-  function handleSuccess() {
-    analysisIdRef.current += 1;
-    setFile(null);
-    setInitialValues(EMPTY_DOCUMENT);
-    setDetectedFields([]);
-    setAnalysisWarning(null);
-    router.refresh();
-    onSuccess?.();
-  }
-
-  function removeFile() {
-    analysisIdRef.current += 1;
-    setFile(null);
-    setInitialValues(EMPTY_DOCUMENT);
-    setDetectedFields([]);
-    setAnalysisWarning(null);
-    setIsAnalyzing(false);
-    setAnalysisVersion((current) => current + 1);
-  }
+  const analyzingCount = items.filter(
+    (item) => item.state === "analyzing",
+  ).length;
 
   return (
-    <DocumentForm
-      key={`${file?.name ?? "empty"}-${analysisVersion}`}
-      initialValues={initialValues}
-      projects={projects}
-      initialOptions={{ zones: [], phases: [], activities: [] }}
-      onCancel={() => onSuccess?.()}
-      onSuccess={handleSuccess}
-      onSubmitForm={submitDocument}
-      submitLabel="Créer le document"
-      submittingLabel="Création…"
-      canSubmit={Boolean(file) && !isAnalyzing}
-    >
-      <div className="space-y-2">
-        <p className="text-sm font-semibold">Fichier PDF</p>
-
-        {!file ? (
-          <div
-            {...getRootProps()}
-            className={[
-              "cursor-pointer rounded-2xl border-2 border-dashed p-8 text-center transition",
-              isDragActive
-                ? "border-primary bg-primary/5"
-                : "border-border hover:bg-muted/50",
-            ].join(" ")}
-          >
-            <input {...getInputProps()} />
-            <Upload className="mx-auto mb-3 size-9 text-muted-foreground" />
-            <p className="font-medium">
-              {isDragActive
-                ? "Dépose le PDF ici…"
-                : "Glisse ton PDF ici ou clique pour le sélectionner"}
-            </p>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3 rounded-2xl border p-4">
-            <FileText className="size-8 shrink-0 text-[var(--opc-blue)]" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{file.name}</p>
-              <p className="text-xs text-muted-foreground">
-                {(file.size / 1024 / 1024).toFixed(2)} Mo
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={removeFile}
-              aria-label="Retirer le fichier"
-            >
-              <X className="size-4" />
-            </Button>
-          </div>
-        )}
-
-        {fileRejections.length > 0 ? (
-          <p className="text-sm text-destructive">
-            Seuls les fichiers PDF sont acceptés.
-          </p>
-        ) : null}
-
-        {isAnalyzing ? (
-          <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900">
-            <Loader2 className="size-5 shrink-0 animate-spin" />
-            Analyse du PDF et préremplissage des informations…
-          </div>
-        ) : detectedFields.length ? (
-          <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950">
-            <CheckCircle2 className="mt-0.5 size-5 shrink-0" />
-            <div>
-              <p className="font-black">Informations détectées automatiquement</p>
-              <p className="mt-1">
-                {detectedFields.join(", ")}. Vérifie uniquement les champs
-                ambigus avant de créer le document.
-              </p>
-            </div>
-          </div>
-        ) : file ? (
-          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-            <FileSearch className="size-5 shrink-0" />
-            Aucun champ fiable n’a été détecté automatiquement.
-          </div>
-        ) : null}
-
-        {analysisWarning ? (
-          <p className="text-xs font-semibold text-amber-700">
-            {analysisWarning}
-          </p>
-        ) : null}
+    <div className="space-y-4">
+      <div
+        {...getRootProps()}
+        className={[
+          "cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition",
+          isDragActive
+            ? "border-primary bg-primary/5"
+            : "border-border hover:bg-muted/50",
+        ].join(" ")}
+      >
+        <input {...getInputProps()} />
+        <Upload className="mx-auto mb-2 size-8 text-muted-foreground" />
+        <p className="font-bold">
+          {isDragActive
+            ? "Dépose les PDF ici…"
+            : "Glisse plusieurs PDF ici ou clique pour les sélectionner"}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Jusqu’à 20 fichiers. Chaque PDF garde son propre titre, sa référence
+          et sa révision.
+        </p>
       </div>
-    </DocumentForm>
+
+      {fileRejections.length > 0 ? (
+        <p className="text-sm font-semibold text-destructive">
+          Certains fichiers ont été refusés : seuls les PDF sont acceptés,
+          avec un maximum de 20 fichiers.
+        </p>
+      ) : null}
+
+      {items.length ? (
+        <div className="rounded-2xl border bg-slate-50 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
+            <div>
+              <h3 className="font-black text-slate-950">
+                {items.length} document(s) dans le lot
+              </h3>
+              <p className="text-xs text-slate-500">
+                Ouvre chaque ligne pour vérifier ou modifier ses informations.
+              </p>
+            </div>
+            {analyzingCount ? (
+              <span className="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1.5 text-xs font-black text-blue-800">
+                <Loader2 className="size-3.5 animate-spin" />
+                Analyse de {analyzingCount} fichier(s)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-black text-emerald-800">
+                <CheckCircle2 className="size-3.5" />
+                Analyse terminée
+              </span>
+            )}
+          </div>
+
+          <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">
+            {items.map((item, index) => (
+              <details
+                key={item.id}
+                {...(items.length === 1 || item.error ? { open: true } : {})}
+                className="group rounded-xl border bg-white"
+              >
+                <summary className="flex cursor-pointer list-none items-center gap-3 p-4">
+                  {item.state === "analyzing" ||
+                  item.state === "uploading" ? (
+                    <Loader2 className="size-5 shrink-0 animate-spin text-blue-600" />
+                  ) : item.error ? (
+                    <AlertTriangle className="size-5 shrink-0 text-red-600" />
+                  ) : (
+                    <FileText className="size-5 shrink-0 text-[var(--opc-blue)]" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-black text-slate-900">
+                      {item.values.reference || `Document ${index + 1}`}
+                      {item.values.title ? ` — ${item.values.title}` : ""}
+                    </p>
+                    <p className="truncate text-xs text-slate-500">
+                      {item.file.name}
+                      {item.values.revision
+                        ? ` · Révision ${item.values.revision}`
+                        : ""}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      removeItem(item.id);
+                    }}
+                    aria-label={`Retirer ${item.file.name}`}
+                    disabled={isSaving}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                  <ChevronDown className="size-4 text-slate-400 transition group-open:rotate-180" />
+                </summary>
+
+                <div className="border-t p-4">
+                  {item.detectedFields.length ? (
+                    <div className="mb-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-950">
+                      <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+                      <p>
+                        <strong>Détecté automatiquement :</strong>{" "}
+                        {item.detectedFields.join(", ")}.
+                      </p>
+                    </div>
+                  ) : item.state !== "analyzing" ? (
+                    <div className="mb-4 flex items-center gap-3 rounded-xl border bg-slate-50 px-4 py-3 text-xs text-slate-700">
+                      <FileSearch className="size-4 shrink-0" />
+                      Aucun champ fiable détecté automatiquement.
+                    </div>
+                  ) : null}
+
+                  {item.warning ? (
+                    <p className="mb-4 text-xs font-semibold text-amber-700">
+                      {item.warning}
+                    </p>
+                  ) : null}
+                  {item.error ? (
+                    <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-xs font-bold text-red-800">
+                      {item.error}
+                    </p>
+                  ) : null}
+
+                  <DocumentForm
+                    key={`${item.id}-${item.formVersion}`}
+                    initialValues={item.values}
+                    projects={projects}
+                    initialOptions={item.options}
+                    onCancel={() => undefined}
+                    onSuccess={() => undefined}
+                    onSubmitForm={async () => ({
+                      success: false,
+                      error: "Utilise le bouton de création du lot.",
+                    })}
+                    hideActions
+                    onValuesChange={(values) =>
+                      updateItemValues(item.id, values)
+                    }
+                  />
+                </div>
+              </details>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {batchError ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+          {batchError}
+        </div>
+      ) : null}
+
+      <div className="flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => onSuccess?.()}
+          disabled={isSaving}
+        >
+          Annuler
+        </Button>
+        <Button
+          type="button"
+          onClick={submitAll}
+          disabled={
+            isSaving ||
+            !items.length ||
+            items.some(
+              (item) =>
+                item.state === "analyzing" || item.state === "uploading",
+            )
+          }
+        >
+          {isSaving ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Save className="size-4" />
+          )}
+          {isSaving
+            ? "Création du lot…"
+            : `Créer ${items.length || ""} document(s)`}
+        </Button>
+      </div>
+    </div>
   );
 }

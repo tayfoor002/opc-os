@@ -23,6 +23,8 @@ type DocumentFormProps = {
   submitLabel?: string;
   submittingLabel?: string;
   canSubmit?: boolean;
+  hideActions?: boolean;
+  onValuesChange?: (values: DocumentEditValues) => void;
   children?: React.ReactNode;
 };
 
@@ -59,6 +61,8 @@ export function DocumentForm({
   submitLabel = "Enregistrer",
   submittingLabel = "Enregistrement…",
   canSubmit = true,
+  hideActions = false,
+  onValuesChange,
   children,
 }: DocumentFormProps) {
   const [values, setValues] = useState(initialValues);
@@ -74,19 +78,23 @@ export function DocumentForm({
     key: Key,
     value: DocumentEditValues[Key],
   ) {
-    setValues((current) => ({ ...current, [key]: value }));
+    const nextValues = { ...values, [key]: value };
+    setValues(nextValues);
+    onValuesChange?.(nextValues);
     setFieldErrors((current) => ({ ...current, [key]: undefined }));
     setError("");
   }
 
   function changeProject(projectId: string) {
-    setValues((current) => ({
-      ...current,
+    const nextValues = {
+      ...values,
       project_id: projectId,
       zone_id: "",
       phase_id: "",
       activity_id: "",
-    }));
+    };
+    setValues(nextValues);
+    onValuesChange?.(nextValues);
     setOptions({ zones: [], phases: [], activities: [] });
     setError("");
 
@@ -218,13 +226,15 @@ export function DocumentForm({
             value={values.document_type}
             onChange={(event) => {
               const documentType = event.target.value;
-              setValues((current) => ({
-                ...current,
+              const nextValues = {
+                ...values,
                 document_type: documentType,
                 document_subcategory: "",
                 execution_status:
                   documentType === "plan" ? "pending" : "not_applicable",
-              }));
+              };
+              setValues(nextValues);
+              onValuesChange?.(nextValues);
             }}
             disabled={isSaving}
             className="h-9 w-full rounded-3xl border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
@@ -338,16 +348,18 @@ export function DocumentForm({
             value={values.zone_id}
             onChange={(event) => {
               const zoneId = event.target.value;
-              setValues((current) => ({
-                ...current,
+              const nextValues = {
+                ...values,
                 zone_id: zoneId,
                 phase_id:
                   options.phases.find(
-                    (phase) => phase.id === current.phase_id,
+                    (phase) => phase.id === values.phase_id,
                   )?.zone_id === zoneId
-                    ? current.phase_id
+                    ? values.phase_id
                     : "",
-              }));
+              };
+              setValues(nextValues);
+              onValuesChange?.(nextValues);
             }}
             disabled={isSaving || isLoadingOptions}
             className="h-9 w-full rounded-3xl border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
@@ -437,7 +449,7 @@ export function DocumentForm({
         </div>
       ) : null}
 
-      <div className="flex justify-end gap-2">
+      {!hideActions ? <div className="flex justify-end gap-2">
         <Button
           type="button"
           variant="outline"
@@ -457,7 +469,7 @@ export function DocumentForm({
           )}
           {isSaving ? submittingLabel : submitLabel}
         </Button>
-      </div>
+      </div> : null}
     </form>
   );
 }

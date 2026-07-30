@@ -31,7 +31,15 @@ function cleanFileStem(fileName: string) {
 }
 
 function findReference(value: string) {
-  const normalized = value.replace(/[–—_]/g, "-").toUpperCase();
+  const normalized = value
+    .replace(/[–—_]/g, "-")
+    .replace(/\s*-\s*/g, "-")
+    .toUpperCase();
+  const compact = normalized.replace(/\s+/g, "");
+  const opcReference = compact.match(
+    /\bSI1-T-EF-[A-Z0-9]{2,6}-(?:PRQ|PRO|PLC|PLN|PV|PVI|ICP|NDC)-[A-Z0-9]{4}\b/,
+  );
+  if (opcReference) return opcReference[0];
   const matches =
     normalized.match(
       /\b[A-Z0-9]{2,5}(?:-[A-Z0-9]{1,12}){4,8}\b/g,
@@ -43,6 +51,37 @@ function findReference(value: string) {
     matches[0] ??
     ""
   );
+}
+
+function referencePrefixPattern(reference: string) {
+  const parts = reference.split("-").map((part) =>
+    part
+      .split("")
+      .map((character) => `${character.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`)
+      .join(""),
+  );
+  return new RegExp(
+    `^\\s*${parts.join("[-–—_\\s]+")}\\s*(?:[-–—_:|]+\\s*)?`,
+    "i",
+  );
+}
+
+function separateTitle(value: string, reference: string, revision: string) {
+  let title = value.trim();
+  if (reference) title = title.replace(referencePrefixPattern(reference), "");
+  if (revision) {
+    title = title.replace(
+      new RegExp(
+        `(?:\\s*[-–—_:|]+\\s*)?(?:REV(?:ISION)?|IND(?:ICE)?)?\\s*${revision}\\s*$`,
+        "i",
+      ),
+      "",
+    );
+  }
+  return title
+    .replace(/^[\s\-–—_:|()[\]]+|[\s\-–—_:|()[\]]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function findRevision(value: string) {
@@ -85,12 +124,7 @@ function titleFromFileName(
   reference: string,
   revision: string,
 ) {
-  let title = cleanFileStem(fileName);
-  for (const removable of [reference, revision]) {
-    if (removable) {
-      title = title.replace(new RegExp(removable, "i"), " ");
-    }
-  }
+  let title = separateTitle(cleanFileStem(fileName), reference, revision);
   title = title
     .replace(/\b(?:REV(?:ISION)?|IND(?:ICE)?)\b/gi, " ")
     .replace(/\b(?:DRAFT|BROUILLON|VALIDE|APPROUVE|REFUSE)\b/gi, " ")
@@ -256,6 +290,9 @@ export async function inferDocumentMetadata(
     usefulPdfTitle(pdfInfo.Title) ||
     titleFromText(pdfText) ||
     titleFromFileName(file.name, reference, revision);
+  const separatedTitle =
+    separateTitle(title, reference, revision) ||
+    titleFromFileName(file.name, reference, revision);
   const status = inferStatus(source);
   const companyMatch = normalizeSearch(source).match(
     /\b(ALSTOM|AVANZIT|EQUANS|ONCF)\b/,
@@ -266,7 +303,7 @@ export async function inferDocumentMetadata(
     parsePdfDate(pdfInfo.ModDate);
   const subcategory = inferSubcategory(documentType, source);
   const values: Partial<DocumentEditValues> = {
-    title,
+    title: separatedTitle,
     reference,
     revision,
     document_type: documentType,
