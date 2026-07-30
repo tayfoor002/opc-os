@@ -112,12 +112,26 @@ export async function downloadReportPdf(
     pdf.rect(0, 0, pageWidth, 23, "F");
     pdf.setFont("helvetica", "bold");
     pdf.setTextColor(255, 255, 255);
+    if (data.showOncfLogo) {
+      pdf.setFontSize(12);
+      pdf.text("ONCF", pageWidth / 2, 5.5, { align: "center" });
+    }
     pdf.setFontSize(9);
-    pdf.text("MARCHÉ N° 625C07 PDD", pageWidth / 2, 8, { align: "center" });
+    pdf.text(
+      "MARCHÉ N° 625C07 PDD",
+      pageWidth / 2,
+      data.showOncfLogo ? 11 : 8,
+      { align: "center" },
+    );
     pdf.setFontSize(12);
-    pdf.text("PROGRAMME DE DÉVELOPPEMENT", pageWidth / 2, 15, {
-      align: "center",
-    });
+    pdf.text(
+      "PROGRAMME DE DÉVELOPPEMENT",
+      pageWidth / 2,
+      data.showOncfLogo ? 18 : 15,
+      {
+        align: "center",
+      },
+    );
     if (logo) {
       const dimensions = fitInside(logo.width, logo.height, 34, 13);
       pdf.addImage(

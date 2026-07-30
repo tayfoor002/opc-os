@@ -8,6 +8,8 @@ import {
   ClipboardList,
   Download,
   Edit3,
+  Eye,
+  EyeOff,
   FileDown,
   FileText,
   Loader2,
@@ -112,6 +114,7 @@ export function MeetingsWorkspace() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "word" | null>(null);
+  const [showOncfLogo, setShowOncfLogo] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [meetingToDelete, setMeetingToDelete] =
@@ -421,6 +424,7 @@ export function MeetingsWorkspace() {
       await downloadMeetingWord(
         currentMeeting,
         `cr-${cleanFileName(form.title || "reunion")}-${form.meeting_date}.docx`,
+        showOncfLogo,
       );
     } catch (exportError) {
       setError(
@@ -445,6 +449,22 @@ export function MeetingsWorkspace() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setShowOncfLogo((current) => !current)}
+            className={`flex h-11 items-center gap-2 rounded-xl border px-4 text-sm font-black ${
+              showOncfLogo
+                ? "border-[var(--opc-blue)] bg-blue-50 text-[var(--opc-blue)]"
+                : "border-[var(--opc-border)] bg-white text-slate-600"
+            }`}
+          >
+            {showOncfLogo ? (
+              <Eye className="h-4 w-4" />
+            ) : (
+              <EyeOff className="h-4 w-4" />
+            )}
+            Logo ONCF
+          </button>
           <button
             type="button"
             onClick={() => void loadMeetings()}
@@ -949,7 +969,11 @@ export function MeetingsWorkspace() {
                 Télécharger Word
               </button>
             </div>
-            <MeetingPreview meeting={currentMeeting} previewRef={previewRef} />
+            <MeetingPreview
+              meeting={currentMeeting}
+              previewRef={previewRef}
+              showOncfLogo={showOncfLogo}
+            />
           </div>
         </div>
       ) : null}
@@ -1102,9 +1126,11 @@ export function MeetingsWorkspace() {
 function MeetingPreview({
   meeting,
   previewRef,
+  showOncfLogo,
 }: {
   meeting: MeetingMinute;
   previewRef: React.RefObject<HTMLElement | null>;
+  showOncfLogo: boolean;
 }) {
   return (
     <article
@@ -1121,6 +1147,11 @@ function MeetingPreview({
           />
         </div>
         <div className="text-center">
+          {showOncfLogo ? (
+            <p className="mb-2 text-2xl font-black tracking-[0.12em] text-white">
+              ONCF
+            </p>
+          ) : null}
           <p className="text-xs font-black uppercase tracking-[0.12em]">
             MARCHÉ N° 625C07 PDD
           </p>

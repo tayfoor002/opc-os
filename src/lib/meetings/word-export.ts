@@ -12,6 +12,7 @@ function saveBlob(blob: Blob, fileName: string) {
 export async function downloadMeetingWord(
   meeting: MeetingMinute,
   fileName: string,
+  showOncfLogo = false,
 ) {
   const {
     AlignmentType,
@@ -83,6 +84,22 @@ export async function downloadMeetingWord(
                       color: "FFFFFF",
                     },
                     children: [
+                      ...(showOncfLogo
+                        ? [
+                            new Paragraph({
+                              alignment: AlignmentType.CENTER,
+                              spacing: { before: 120, after: 60 },
+                              children: [
+                                new TextRun({
+                                  text: "ONCF",
+                                  bold: true,
+                                  color: "FFFFFF",
+                                  size: 28,
+                                }),
+                              ],
+                            }),
+                          ]
+                        : []),
                       new Paragraph({
                         alignment: AlignmentType.CENTER,
                         spacing: { before: 150, after: 150 },

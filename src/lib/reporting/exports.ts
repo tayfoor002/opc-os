@@ -34,6 +34,7 @@ export type ExportPhoto = {
 };
 
 export type ReportExportData = {
+  showOncfLogo: boolean;
   reportTitle: string;
   periodTitle: string;
   periodRange: string;
@@ -286,17 +287,22 @@ export async function downloadReportWord(
     insideHorizontal: border,
     insideVertical: border,
   };
-  const alstomLogo = await loadImage("/alstom-logo.png");
-  const alstomLogoSize = fitImage(
-    alstomLogo.width,
-    alstomLogo.height,
-    105,
-    38,
-  );
-  const whiteCell = (children: InstanceType<typeof Paragraph>[]) =>
+  const brandCell = (text: string) =>
     new TableCell({
-      children,
-      shading: { fill: "FFFFFF", type: ShadingType.CLEAR },
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new TextRun({
+              text,
+              bold: true,
+              color: "FFFFFF",
+              size: 30,
+            }),
+          ],
+        }),
+      ],
+      shading: { fill: red, type: ShadingType.CLEAR },
       margins: { top: 100, bottom: 100, left: 120, right: 120 },
     });
   const headerCell = (text: string) =>
@@ -355,20 +361,24 @@ export async function downloadReportWord(
       rows: [
         new TableRow({
           children: [
-            whiteCell([
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [
-                  new ImageRun({
-                    data: alstomLogo.bytes,
-                    type: alstomLogo.type,
-                    transformation: alstomLogoSize,
-                  }),
-                ],
-              }),
-            ]),
+            brandCell("ALSTOM"),
             new TableCell({
               children: [
+                ...(data.showOncfLogo
+                  ? [
+                      new Paragraph({
+                        alignment: AlignmentType.CENTER,
+                        children: [
+                          new TextRun({
+                            text: "ONCF",
+                            bold: true,
+                            color: "FFFFFF",
+                            size: 30,
+                          }),
+                        ],
+                      }),
+                    ]
+                  : []),
                 new Paragraph({
                   alignment: AlignmentType.CENTER,
                   children: [
@@ -395,19 +405,7 @@ export async function downloadReportWord(
               shading: { fill: red, type: ShadingType.CLEAR },
               margins: { top: 160, bottom: 160, left: 100, right: 100 },
             }),
-            whiteCell([
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [
-                  new TextRun({
-                    text: "AVANZIT",
-                    bold: true,
-                    color: navy,
-                    size: 30,
-                  }),
-                ],
-              }),
-            ]),
+            brandCell("AVANZIT"),
           ],
         }),
       ],

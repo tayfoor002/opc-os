@@ -7,6 +7,8 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
+  Eye,
+  EyeOff,
   FileDown,
   FileText,
   Loader2,
@@ -152,6 +154,7 @@ export function ReportingWorkspace() {
   const [periodEnd, setPeriodEnd] = useState(today);
   const [selectedZoneIds, setSelectedZoneIds] = useState<string[]>([]);
   const [activityFilter, setActivityFilter] = useState("all");
+  const [showOncfLogo, setShowOncfLogo] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState<"pdf" | "word" | null>(null);
@@ -378,6 +381,7 @@ export function ReportingWorkspace() {
 
   function buildExportData(): ReportExportData {
     return {
+      showOncfLogo,
       reportTitle: reportLabels[type],
       periodTitle: periodSubtitle(type, period.start, period.end),
       periodRange: `${period.start} - ${period.end}`,
@@ -653,6 +657,22 @@ export function ReportingWorkspace() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setShowOncfLogo((current) => !current)}
+            className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-black ${
+              showOncfLogo
+                ? "border-[var(--opc-blue)] bg-blue-50 text-[var(--opc-blue)]"
+                : "border-[var(--opc-border)] bg-white text-slate-600"
+            }`}
+          >
+            {showOncfLogo ? (
+              <Eye className="h-4 w-4" />
+            ) : (
+              <EyeOff className="h-4 w-4" />
+            )}
+            Logo ONCF
+          </button>
           <button type="button" onClick={() => void loadReporting()} className="flex items-center gap-2 rounded-xl border border-[var(--opc-border)] bg-white px-4 py-3 text-sm font-bold">
             <RefreshCw className="h-4 w-4" /> Actualiser
           </button>
@@ -758,6 +778,11 @@ export function ReportingWorkspace() {
               <img src="/alstom-logo.png" alt="Alstom" className="h-auto max-h-12 w-auto max-w-full object-contain brightness-0 invert" />
             </div>
             <div className="text-center">
+              {showOncfLogo ? (
+                <p className="mb-2 text-2xl font-black tracking-[0.12em] text-white">
+                  ONCF
+                </p>
+              ) : null}
               <p className="text-sm font-black uppercase tracking-[0.13em]">
                 MARCHÉ N° 625C07 PDD
               </p>
