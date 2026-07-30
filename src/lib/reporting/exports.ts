@@ -142,24 +142,107 @@ export async function downloadReportPdf(
     import("html2canvas"),
     import("jspdf"),
   ]);
-  const canvas = await html2canvas(element, {
-    scale: 2,
-    useCORS: true,
-    backgroundColor: "#ffffff",
-    logging: false,
-    windowWidth: element.scrollWidth,
-    windowHeight: element.scrollHeight,
-    onclone: (clonedDocument, clonedElement) => {
-      normalizePdfCloneColors(clonedDocument.documentElement, false);
-      normalizePdfCloneColors(clonedDocument.body, false);
-      normalizePdfCloneColors(clonedElement);
-    },
-  });
+  const tableContainers = Array.from(
+    element.querySelectorAll<HTMLElement>("[data-pdf-table-scroll]"),
+  );
+  const wideTables = Array.from(
+    element.querySelectorAll<HTMLElement>("[data-pdf-wide-table]"),
+  );
+  const maximumColumns = Math.max(
+    0,
+    ...tableContainers.map((container) =>
+      Number(container.dataset.pdfTableColumns || 0),
+    ),
+  );
+  const originalStyles = [element, ...tableContainers, ...wideTables].map(
+    (target) => ({ target, cssText: target.style.cssText }),
+  );
+  const tableWidths = wideTables.map((table) =>
+    Math.max(table.scrollWidth, Math.ceil(table.getBoundingClientRect().width)),
+  );
+
+  let canvas: HTMLCanvasElement;
+  try {
+    wideTables.forEach((table, index) => {
+      table.style.width = `${tableWidths[index]}px`;
+      table.style.maxWidth = "none";
+    });
+    tableContainers.forEach((container) => {
+      container.style.overflow = "visible";
+      container.style.maxWidth = "none";
+    });
+    element.style.overflow = "visible";
+    element.style.maxWidth = "none";
+    element.style.width = `${Math.max(
+      element.clientWidth,
+      ...tableWidths.map((width) => width + 56),
+    )}px`;
+
+    await new Promise<void>((resolve) =>
+      window.requestAnimationFrame(() => resolve()),
+    );
+
+    const captureWidth = Math.ceil(element.scrollWidth);
+    const captureHeight = Math.ceil(element.scrollHeight);
+    const maximumCanvasPixels = 28_000_000;
+    const maximumCanvasSide = 30_000;
+    const safeScale = Math.max(
+      0.2,
+      Math.min(
+        1.75,
+        Math.sqrt(maximumCanvasPixels / (captureWidth * captureHeight)),
+        maximumCanvasSide / captureWidth,
+        maximumCanvasSide / captureHeight,
+      ),
+    );
+
+    canvas = await html2canvas(element, {
+      scale: safeScale,
+      width: captureWidth,
+      height: captureHeight,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+      windowWidth: captureWidth,
+      windowHeight: captureHeight,
+      onclone: (clonedDocument, clonedElement) => {
+        normalizePdfCloneColors(clonedDocument.documentElement, false);
+        normalizePdfCloneColors(clonedDocument.body, false);
+        normalizePdfCloneColors(clonedElement);
+        clonedElement.style.overflow = "visible";
+        clonedElement
+          .querySelectorAll<HTMLElement>("[data-pdf-table-scroll]")
+          .forEach((container) => {
+            container.style.overflow = "visible";
+            container.style.maxWidth = "none";
+          });
+      },
+    });
+  } catch (captureError) {
+    throw new Error(
+      captureError instanceof Error
+        ? `La préparation du PDF a échoué : ${captureError.message}`
+        : "La préparation du PDF a échoué.",
+    );
+  } finally {
+    originalStyles.forEach(({ target, cssText }) => {
+      target.style.cssText = cssText;
+    });
+  }
+
+  const pdfFormat =
+    maximumColumns > 24
+      ? "a1"
+      : maximumColumns > 14
+        ? "a2"
+        : maximumColumns > 8
+          ? "a3"
+          : "a4";
 
   const pdf = new jsPDF({
     orientation: "landscape",
     unit: "mm",
-    format: "a4",
+    format: pdfFormat,
     compress: true,
   });
   const pageWidth = pdf.internal.pageSize.getWidth();
@@ -206,7 +289,16 @@ export async function downloadReportPdf(
     sourceY += sliceHeight;
     pageIndex += 1;
   }
-  pdf.save(fileName);
+  const pdfBlob = pdf.output("blob");
+  const downloadUrl = URL.createObjectURL(pdfBlob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
 }
 
 async function loadImage(path: string) {

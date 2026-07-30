@@ -144,6 +144,7 @@ export function MeetingsWorkspace() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "word" | null>(null);
+  const [exportError, setExportError] = useState("");
   const [excelImporting, setExcelImporting] = useState(false);
   const [showOncfLogo, setShowOncfLogo] = useState(false);
   const [meetingPhotoUrls, setMeetingPhotoUrls] = useState<
@@ -674,17 +675,19 @@ export function MeetingsWorkspace() {
     if (!previewRef.current) return;
     setExporting("pdf");
     setError("");
+    setExportError("");
     try {
       await downloadReportPdf(
         previewRef.current,
         `cr-${cleanFileName(form.title || "reunion")}-${form.meeting_date}.pdf`,
       );
     } catch (exportError) {
-      setError(
+      const message =
         exportError instanceof Error
           ? exportError.message
-          : "Impossible de générer le PDF.",
-      );
+          : "Impossible de générer le PDF.";
+      setError(message);
+      setExportError(message);
     }
     setExporting(null);
   }
@@ -692,6 +695,7 @@ export function MeetingsWorkspace() {
   async function exportWord() {
     setExporting("word");
     setError("");
+    setExportError("");
     try {
       await downloadMeetingWord(
         currentMeeting,
@@ -699,11 +703,12 @@ export function MeetingsWorkspace() {
         showOncfLogo,
       );
     } catch (exportError) {
-      setError(
+      const message =
         exportError instanceof Error
           ? exportError.message
-          : "Impossible de générer le document Word.",
-      );
+          : "Impossible de générer le document Word.";
+      setError(message);
+      setExportError(message);
     }
     setExporting(null);
   }
@@ -1589,7 +1594,9 @@ export function MeetingsWorkspace() {
                 ) : (
                   <FileDown className="h-4 w-4" />
                 )}
-                Télécharger PDF
+                {exporting === "pdf"
+                  ? "Préparation du PDF..."
+                  : "Télécharger PDF"}
               </button>
               <button
                 type="button"
@@ -1605,6 +1612,11 @@ export function MeetingsWorkspace() {
                 Télécharger Word
               </button>
             </div>
+            {exportError ? (
+              <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+                {exportError}
+              </p>
+            ) : null}
             <MeetingPreview
               meeting={currentMeeting}
               previewRef={previewRef}
@@ -1944,8 +1956,13 @@ function MeetingPreview({
                 <h4 className="mb-2 text-sm font-black text-[var(--opc-blue)]">
                   {table.title || "Tableau"}
                 </h4>
-                <div className="overflow-x-auto rounded-xl border border-[var(--opc-border)]">
+                <div
+                  data-pdf-table-scroll
+                  data-pdf-table-columns={table.columns.length}
+                  className="overflow-x-auto rounded-xl border border-[var(--opc-border)]"
+                >
                   <table
+                    data-pdf-wide-table
                     className="min-w-full border-collapse text-left text-xs"
                     style={{
                       width: `${Math.max(100, table.columns.length * 18)}%`,
