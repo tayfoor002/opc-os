@@ -597,7 +597,7 @@ export function ProcedureRegister({ documents, projects }: Props) {
                         <>
                           <span className="block">{latest.version}</span>
                           <span className="mt-1 block whitespace-nowrap">
-                            {latest.date}
+                            {latest.date ?? "Date non renseignée"}
                           </span>
                         </>
                       ) : (

@@ -32,8 +32,8 @@ export type ProcedureRegisterChangeSummary = {
 export type GedDeposit = {
   version: string;
   versionNumber: number;
-  date: string;
-  timestamp: number;
+  date: string | null;
+  timestamp: number | null;
 };
 
 export type ProcedureDocumentMatch = {
@@ -115,23 +115,20 @@ export function getLatestGedDeposit(value: string): GedDeposit | null {
   const deposits: GedDeposit[] = [];
   for (const line of value.split(/\r?\n/)) {
     const versionMatch = line.toUpperCase().match(/\bV\s*0*(\d{1,3})\b/);
+    if (!versionMatch) continue;
     const parsedDate = parseFrenchDate(line);
-    if (!versionMatch || !parsedDate) continue;
     const versionNumber = Number(versionMatch[1]);
     deposits.push({
       version: `V${versionNumber.toString().padStart(2, "0")}`,
       versionNumber,
-      ...parsedDate,
+      date: parsedDate?.date ?? null,
+      timestamp: parsedDate?.timestamp ?? null,
     });
   }
 
-  return (
-    deposits.sort(
-      (left, right) =>
-        right.timestamp - left.timestamp ||
-        right.versionNumber - left.versionNumber,
-    )[0] ?? null
-  );
+  // The register is chronological inside the GED cell. The last version
+  // mentioned is authoritative, even when its deposit date is still blank.
+  return deposits.at(-1) ?? null;
 }
 
 export async function parseProcedureRegister(
