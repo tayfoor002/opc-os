@@ -99,6 +99,18 @@ type ExistingDocumentVersion = {
   file_url: string | null;
 };
 
+function isMissingDocumentRelationColumn(
+  error: { code?: string; message: string },
+  table: string,
+): boolean {
+  const message = error.message.toLocaleLowerCase("en");
+  return (
+    (error.code === "PGRST204" || message.includes("does not exist")) &&
+    message.includes("document_id") &&
+    message.includes(table.toLocaleLowerCase("en"))
+  );
+}
+
 async function transferDocumentRelations(
   supabase: Awaited<ReturnType<typeof createClient>>,
   previousIds: string[],
@@ -134,6 +146,12 @@ async function transferDocumentRelations(
       .update({ document_id: nextId })
       .in("document_id", previousIds);
     if (error) {
+      // Some existing OPC OS databases were created before `document_id`
+      // was added to these optional legacy tables. In that case there is no
+      // document relation to transfer, so the replacement can safely proceed.
+      if (isMissingDocumentRelationColumn(error, table)) {
+        continue;
+      }
       return error.message;
     }
   }
