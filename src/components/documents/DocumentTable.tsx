@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Pencil, Trash2 } from "lucide-react";
 
 import type { DocumentListItem } from "@/lib/documents/queries";
 
@@ -8,6 +9,7 @@ type DocumentTableProps = {
   selectedIds: Set<string>;
   onToggle: (documentId: string) => void;
   onToggleAll: () => void;
+  onRequestDelete: (documentId: string) => void;
 };
 
 const typeLabels: Record<string, string> = {
@@ -37,6 +39,7 @@ export function DocumentTable({
   selectedIds,
   onToggle,
   onToggleAll,
+  onRequestDelete,
 }: DocumentTableProps) {
   const latestPlanIds = new Set<string>();
   const seenPlanReferences = new Set<string>();
@@ -78,6 +81,7 @@ export function DocumentTable({
                   className="size-4 cursor-pointer rounded border-slate-300 accent-[var(--opc-blue)]"
                 />
               </th>
+              <th className="w-48 px-3 py-4">Actions</th>
               <th className="px-5 py-4">Référence</th>
               <th className="px-5 py-4">Titre</th>
               <th className="px-5 py-4">Type / sous-catégorie</th>
@@ -106,6 +110,27 @@ export function DocumentTable({
                       aria-label={`Sélectionner ${document.title}`}
                       className="size-4 cursor-pointer rounded border-slate-300 accent-[var(--opc-blue)]"
                     />
+                  </td>
+                  <td className="w-48 px-3 py-4">
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/documents/${document.id}?edit=1`}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                        aria-label={`Modifier ${document.title}`}
+                      >
+                        <Pencil className="size-3.5" />
+                        Modifier
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => onRequestDelete(document.id)}
+                        className="inline-flex size-9 items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 transition hover:bg-red-50"
+                        aria-label={`Supprimer ${document.title}`}
+                        title="Supprimer"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </div>
                   </td>
                   <Cell document={document}>
                     <span className="font-black text-[var(--opc-blue)]">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Download,
   FilePenLine,
@@ -47,7 +47,8 @@ export function DocumentDetailsActions({
   initialOptions,
 }: DocumentDetailsActionsProps) {
   const router = useRouter();
-  const [editOpen, setEditOpen] = useState(false);
+  const searchParams = useSearchParams();
+  const [editOpen, setEditOpen] = useState(searchParams.get("edit") === "1");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [isDeleting, startDeleting] = useTransition();

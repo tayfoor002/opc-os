@@ -44,6 +44,7 @@ export function DocumentsView({ documents, projects }: Props) {
   const [open, setOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -98,7 +99,7 @@ export function DocumentsView({ documents, projects }: Props) {
   }
 
   function handleMultipleDelete() {
-    const ids = [...selectedIds];
+    const ids = pendingDeleteIds;
     if (!ids.length) return;
     setDeleteError("");
     startDeleting(async () => {
@@ -107,10 +108,21 @@ export function DocumentsView({ documents, projects }: Props) {
         setDeleteError(result.error);
         return;
       }
-      setSelectedIds(new Set());
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      setPendingDeleteIds([]);
       setDeleteOpen(false);
       router.refresh();
     });
+  }
+
+  function requestDelete(documentIds: string[]) {
+    setDeleteError("");
+    setPendingDeleteIds(documentIds);
+    setDeleteOpen(true);
   }
 
   return (
@@ -140,7 +152,7 @@ export function DocumentsView({ documents, projects }: Props) {
           }`}
         >
           <FileSpreadsheet className="h-4 w-4" />
-          Suivi des procédures
+          Tableau de référence procédures
         </button>
       </div>
 
@@ -226,6 +238,27 @@ export function DocumentsView({ documents, projects }: Props) {
             documentIds={documents.map((document) => document.id)}
           />
         </div>
+        {typeFilter === "procedure" ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+            <div>
+              <p className="text-sm font-black text-emerald-950">
+                Tableau Excel de référence des procédures
+              </p>
+              <p className="text-xs font-semibold text-emerald-800">
+                Comparez la liste de référence avec les procédures présentes
+                dans OPC OS.
+              </p>
+            </div>
+            <Button
+              type="button"
+              onClick={() => setView("procedure-register")}
+              className="bg-emerald-700 hover:bg-emerald-800"
+            >
+              <FileSpreadsheet className="size-4" />
+              Ouvrir le tableau de référence
+            </Button>
+          </div>
+        ) : null}
       </section>
 
       <DocumentTable
@@ -234,6 +267,7 @@ export function DocumentsView({ documents, projects }: Props) {
         selectedIds={selectedIds}
         onToggle={toggleDocument}
         onToggleAll={toggleAllVisible}
+        onRequestDelete={(documentId) => requestDelete([documentId])}
       />
 
       {selectedIds.size ? (
@@ -245,8 +279,7 @@ export function DocumentsView({ documents, projects }: Props) {
             type="button"
             variant="destructive"
             onClick={() => {
-              setDeleteError("");
-              setDeleteOpen(true);
+              requestDelete([...selectedIds]);
             }}
           >
             <Trash2 className="size-4" />
@@ -257,13 +290,23 @@ export function DocumentsView({ documents, projects }: Props) {
         </>
       )}
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <Dialog
+        open={deleteOpen}
+        onOpenChange={(nextOpen) => {
+          setDeleteOpen(nextOpen);
+          if (!nextOpen && !isDeleting) setPendingDeleteIds([]);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Supprimer les documents sélectionnés ?</DialogTitle>
+            <DialogTitle>
+              {pendingDeleteIds.length === 1
+                ? "Supprimer ce document ?"
+                : "Supprimer les documents sélectionnés ?"}
+            </DialogTitle>
             <DialogDescription>
-              {selectedIds.size} document(s) et leurs fichiers PDF seront
-              supprimés définitivement. Cette action est irréversible.
+              {pendingDeleteIds.length} document(s) et leurs fichiers PDF
+              seront supprimés définitivement. Cette action est irréversible.
             </DialogDescription>
           </DialogHeader>
 
