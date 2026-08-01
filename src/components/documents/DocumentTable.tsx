@@ -5,6 +5,9 @@ import type { DocumentListItem } from "@/lib/documents/queries";
 type DocumentTableProps = {
   documents: DocumentListItem[];
   allDocuments: DocumentListItem[];
+  selectedIds: Set<string>;
+  onToggle: (documentId: string) => void;
+  onToggleAll: () => void;
 };
 
 const typeLabels: Record<string, string> = {
@@ -31,6 +34,9 @@ const subcategoryLabels: Record<string, string> = {
 export function DocumentTable({
   documents,
   allDocuments,
+  selectedIds,
+  onToggle,
+  onToggleAll,
 }: DocumentTableProps) {
   const latestPlanIds = new Set<string>();
   const seenPlanReferences = new Set<string>();
@@ -42,6 +48,9 @@ export function DocumentTable({
       latestPlanIds.add(document.id);
     }
   }
+  const allVisibleSelected = documents.every((document) =>
+    selectedIds.has(document.id),
+  );
 
   if (documents.length === 0) {
     return (
@@ -60,6 +69,15 @@ export function DocumentTable({
         <table className="min-w-[1200px] w-full text-left">
           <thead className="bg-slate-50 text-xs uppercase tracking-wider text-[var(--opc-muted)]">
             <tr>
+              <th className="w-14 px-5 py-4">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={onToggleAll}
+                  aria-label="Sélectionner tous les documents affichés"
+                  className="size-4 cursor-pointer rounded border-slate-300 accent-[var(--opc-blue)]"
+                />
+              </th>
               <th className="px-5 py-4">Référence</th>
               <th className="px-5 py-4">Titre</th>
               <th className="px-5 py-4">Type / sous-catégorie</th>
@@ -72,11 +90,23 @@ export function DocumentTable({
           <tbody className="divide-y divide-[var(--opc-border)]">
             {documents.map((document) => {
               const isLatestPlan = latestPlanIds.has(document.id);
+              const isSelected = selectedIds.has(document.id);
               return (
                 <tr
                   key={document.id}
-                  className="group transition-colors hover:bg-slate-50 focus-within:bg-slate-50"
+                  className={`group transition-colors hover:bg-slate-50 focus-within:bg-slate-50 ${
+                    isSelected ? "bg-blue-50/70" : ""
+                  }`}
                 >
+                  <td className="w-14 px-5 py-4">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => onToggle(document.id)}
+                      aria-label={`Sélectionner ${document.title}`}
+                      className="size-4 cursor-pointer rounded border-slate-300 accent-[var(--opc-blue)]"
+                    />
+                  </td>
                   <Cell document={document}>
                     <span className="font-black text-[var(--opc-blue)]">
                       {document.reference || "Sans référence"}

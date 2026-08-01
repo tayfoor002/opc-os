@@ -1,7 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { FileSpreadsheet, FolderOpen, Search } from "lucide-react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import {
+  FileSpreadsheet,
+  FolderOpen,
+  Loader2,
+  Search,
+  Trash2,
+} from "lucide-react";
+
+import { deleteDocuments } from "@/app/documents/actions";
+import { Button } from "@/components/ui/button";
 
 import { DocumentToolbar } from "./DocumentToolbar";
 import { DocumentTable } from "./DocumentTable";
@@ -12,6 +22,7 @@ import { ProcedureRegister } from "./ProcedureRegister";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -29,7 +40,14 @@ type Props = {
 };
 
 export function DocumentsView({ documents, projects }: Props) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [isDeleting, startDeleting] = useTransition();
   const [view, setView] = useState<"library" | "procedure-register">("library");
   const [typeFilter, setTypeFilter] = useState("all");
   const [subcategoryFilter, setSubcategoryFilter] = useState("all");
@@ -55,6 +73,45 @@ export function DocumentsView({ documents, projects }: Props) {
       }),
     [documents, query, subcategoryFilter, typeFilter],
   );
+
+  function toggleDocument(documentId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(documentId)) next.delete(documentId);
+      else next.add(documentId);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      const visibleIds = filteredDocuments.map((document) => document.id);
+      const allVisibleSelected =
+        visibleIds.length > 0 && visibleIds.every((id) => next.has(id));
+      for (const id of visibleIds) {
+        if (allVisibleSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function handleMultipleDelete() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    setDeleteError("");
+    startDeleting(async () => {
+      const result = await deleteDocuments(ids);
+      if (!result.success) {
+        setDeleteError(result.error);
+        return;
+      }
+      setSelectedIds(new Set());
+      setDeleteOpen(false);
+      router.refresh();
+    });
+  }
 
   return (
     <>
@@ -174,9 +231,76 @@ export function DocumentsView({ documents, projects }: Props) {
       <DocumentTable
         documents={filteredDocuments}
         allDocuments={documents}
+        selectedIds={selectedIds}
+        onToggle={toggleDocument}
+        onToggleAll={toggleAllVisible}
       />
+
+      {selectedIds.size ? (
+        <div className="sticky bottom-4 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-white px-4 py-3 shadow-lg">
+          <span className="text-sm font-black text-slate-700">
+            {selectedIds.size} document(s) sélectionné(s)
+          </span>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => {
+              setDeleteError("");
+              setDeleteOpen(true);
+            }}
+          >
+            <Trash2 className="size-4" />
+            Supprimer la sélection
+          </Button>
+        </div>
+      ) : null}
         </>
       )}
+
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Supprimer les documents sélectionnés ?</DialogTitle>
+            <DialogDescription>
+              {selectedIds.size} document(s) et leurs fichiers PDF seront
+              supprimés définitivement. Cette action est irréversible.
+            </DialogDescription>
+          </DialogHeader>
+
+          {deleteError ? (
+            <div
+              role="alert"
+              className="rounded-xl bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive"
+            >
+              {deleteError}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteOpen(false)}
+              disabled={isDeleting}
+            >
+              Annuler
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleMultipleDelete}
+              disabled={isDeleting || !selectedIds.size}
+            >
+              {isDeleting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4" />
+              )}
+              Supprimer définitivement
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">

@@ -68,6 +68,7 @@ const documentMetadataSchema = z.object({
 });
 
 const documentIdSchema = z.string().uuid();
+const documentIdsSchema = z.array(documentIdSchema).min(1).max(200);
 
 function safeFileName(fileName: string): string {
   return fileName
@@ -872,6 +873,95 @@ export async function deleteDocument(
       success: false,
       error:
         "Le fichier a été supprimé, mais la ligne du document n’a pas pu être supprimée : " +
+        deleteError.message,
+    };
+  }
+
+  revalidatePath("/documents");
+  return { success: true };
+}
+
+export async function deleteDocuments(
+  documentIds: string[],
+): Promise<DocumentActionResult> {
+  const parsedIds = documentIdsSchema.safeParse([...new Set(documentIds)]);
+  if (!parsedIds.success) {
+    return {
+      success: false,
+      error: "La sélection de documents est invalide.",
+    };
+  }
+
+  const supabase = await createClient();
+  const { data: documents, error: documentsError } = await supabase
+    .from("documents")
+    .select("id,file_url")
+    .in("id", parsedIds.data);
+
+  if (documentsError) {
+    return {
+      success: false,
+      error: `Impossible de charger les documents : ${documentsError.message}`,
+    };
+  }
+  if (!documents?.length) {
+    return {
+      success: false,
+      error: "Les documents sélectionnés n’existent plus.",
+    };
+  }
+  if (documents.length !== parsedIds.data.length) {
+    return {
+      success: false,
+      error:
+        "Certains documents sélectionnés n’existent plus. Actualise la page avant de recommencer.",
+    };
+  }
+
+  const storage = supabase.storage.from("documents");
+  const storagePaths: string[] = [];
+  for (const document of documents) {
+    if (!document.file_url) continue;
+
+    let existingPath: string | null = null;
+    for (const candidate of getDocumentStoragePathCandidates(
+      document.file_url,
+    )) {
+      const signed = await storage.createSignedUrl(candidate, 30);
+      if (!signed.error && signed.data) {
+        existingPath = candidate;
+        break;
+      }
+    }
+    if (!existingPath) {
+      return {
+        success: false,
+        error:
+          "Au moins un fichier PDF est introuvable dans le Storage. Aucun document n’a été supprimé.",
+      };
+    }
+    storagePaths.push(existingPath);
+  }
+
+  if (storagePaths.length) {
+    const { error: storageError } = await storage.remove(storagePaths);
+    if (storageError) {
+      return {
+        success: false,
+        error: `Impossible de supprimer les fichiers : ${storageError.message}`,
+      };
+    }
+  }
+
+  const { error: deleteError } = await supabase
+    .from("documents")
+    .delete()
+    .in("id", parsedIds.data);
+  if (deleteError) {
+    return {
+      success: false,
+      error:
+        "Les fichiers ont été supprimés, mais les lignes documentaires n’ont pas pu être supprimées : " +
         deleteError.message,
     };
   }
