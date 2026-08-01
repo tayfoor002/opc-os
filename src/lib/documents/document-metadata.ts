@@ -103,6 +103,16 @@ function separateTitle(value: string, reference: string, revision: string) {
 
 function findRevision(value: string) {
   const normalized = normalizeSearch(value);
+  // Some engineering PDFs split a revision such as V01 into two text
+  // fragments ("V0" and "1"). Rows are reconstructed with a space, so this
+  // fragmented form must be handled before the generic V00 matcher.
+  const fragmentedVersion = normalized.match(
+    /\bV\s*(\d)\s+(\d{1,2})\b/,
+  );
+  if (fragmentedVersion) {
+    const digits = `${fragmentedVersion[1]}${fragmentedVersion[2]}`;
+    return `V${Number(digits).toString().padStart(2, "0")}`;
+  }
   const explicit = normalized.match(
     /\b(?:REV(?:ISION)?|IND(?:ICE)?)\s*[:.\-]?\s*(V?\d{1,3}|[A-Z])\b/,
   );
