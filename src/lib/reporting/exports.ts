@@ -8,7 +8,8 @@ export type ExportTask = {
   baselineProgress: number;
   currentProgress: number;
   periodIncrease: number;
-  measurement: string;
+  realizedValue: string;
+  objectiveValue: string;
   buildingSteps: Array<{
     label: string;
     progress: number;
@@ -612,18 +613,22 @@ export async function downloadReportWord(
         new TextRun({ text: data.periodRange, color: "64748B", size: 17 }),
       ],
     }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 220 },
-      children: [
-        new TextRun({
-          text: data.scopeTitle,
-          bold: true,
-          color: red,
-          size: 18,
-        }),
-      ],
-    }),
+    ...(data.scopeTitle
+      ? [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 220 },
+            children: [
+              new TextRun({
+                text: data.scopeTitle,
+                bold: true,
+                color: red,
+                size: 18,
+              }),
+            ],
+          }),
+        ]
+      : [new Paragraph({ spacing: { after: 120 } })]),
     sectionTitle("1. SYNTHÈSE EXÉCUTIVE"),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
@@ -653,9 +658,7 @@ export async function downloadReportWord(
                       size: 42,
                     }),
                     new TextRun({
-                      text: data.metrics.globalGainStatus.startsWith("État initial")
-                        ? "   ÉTAT INITIAL"
-                        : `   +${data.metrics.globalGain}% sur la période`,
+                      text: `   +${data.metrics.globalGain}% sur la période`,
                       bold: true,
                       color: green,
                       size: 22,
@@ -687,15 +690,19 @@ export async function downloadReportWord(
                     }),
                   ],
                 }),
-                new Paragraph({
-                  children: [
-                    new TextRun({
-                      text: data.metrics.globalGainStatus,
-                      color: "A7F3D0",
-                      size: 15,
-                    }),
-                  ],
-                }),
+                ...(data.metrics.globalGainStatus
+                  ? [
+                      new Paragraph({
+                        children: [
+                          new TextRun({
+                            text: data.metrics.globalGainStatus,
+                            color: "A7F3D0",
+                            size: 15,
+                          }),
+                        ],
+                      }),
+                    ]
+                  : []),
               ],
               shading: { fill: navy, type: ShadingType.CLEAR },
               margins: { top: 180, bottom: 180, left: 220, right: 220 },
@@ -889,10 +896,22 @@ export async function downloadReportWord(
                         spacing: { before: 35 },
                         children: [
                           new TextRun({
-                            text: task.measurement,
+                            text: "RÉALISÉ / OBJECTIF   ",
+                            color: "475569",
+                            bold: true,
+                            size: 14,
+                          }),
+                          new TextRun({
+                            text: task.realizedValue,
                             color: progressBase,
                             bold: true,
-                            size: 17,
+                            size: 18,
+                          }),
+                          new TextRun({
+                            text: ` / ${task.objectiveValue}`,
+                            color: "000000",
+                            bold: true,
+                            size: 18,
                           }),
                         ],
                       }),

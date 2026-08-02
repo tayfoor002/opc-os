@@ -319,8 +319,10 @@ export async function downloadReportPdf(
   pdf.text(data.periodRange, pageWidth / 2, y + 26, { align: "center" });
   pdf.setFont("helvetica", "bold");
   pdf.setTextColor(...red);
-  pdf.text(data.scopeTitle, pageWidth / 2, y + 31, { align: "center" });
-  y += 38;
+  if (data.scopeTitle) {
+    pdf.text(data.scopeTitle, pageWidth / 2, y + 31, { align: "center" });
+  }
+  y += data.scopeTitle ? 38 : 34;
 
   section(1, "SYNTHÈSE EXÉCUTIVE");
   ensure(42);
@@ -334,13 +336,7 @@ export async function downloadReportPdf(
   pdf.text(`${data.metrics.globalProgress}%`, margin + 5, y + 18);
   pdf.setTextColor(...green);
   pdf.setFontSize(13);
-  pdf.text(
-    data.metrics.globalGainStatus.startsWith("État initial")
-      ? "ÉTAT INITIAL"
-      : `+${data.metrics.globalGain}%`,
-    margin + 36,
-    y + 18,
-  );
+  pdf.text(`+${data.metrics.globalGain}%`, margin + 36, y + 18);
   progressBar(
     margin + 55,
     y + 10,
@@ -354,7 +350,9 @@ export async function downloadReportPdf(
   pdf.setTextColor(203, 213, 225);
   pdf.setFontSize(7);
   pdf.text(data.metrics.globalSource, margin + 55, y + 23);
-  pdf.text(data.metrics.globalGainStatus, margin + 55, y + 27);
+  if (data.metrics.globalGainStatus) {
+    pdf.text(data.metrics.globalGainStatus, margin + 55, y + 27);
+  }
   pdf.text(
     `Acquis ${data.metrics.globalBaseline}%  |  Gain +${data.metrics.globalGain}%  |  Reste ${Math.max(0, Math.round((100 - data.metrics.globalProgress) * 10) / 10)}%`,
     margin + 55,
@@ -516,13 +514,16 @@ export async function downloadReportPdf(
         y + 8.2,
       );
       pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(...progressGreen);
+      pdf.setFontSize(6.2);
+      pdf.setTextColor(...slate);
+      pdf.text("RÉALISÉ / OBJECTIF", margin + 3, y + 11.6);
+      const realizedX = margin + 29;
       pdf.setFontSize(7.2);
-      pdf.text(
-        (pdf.splitTextToSize(task.measurement, 74) as string[])[0],
-        margin + 3,
-        y + 11.6,
-      );
+      pdf.setTextColor(...progressGreen);
+      pdf.text(task.realizedValue, realizedX, y + 11.6);
+      const objectiveX = realizedX + pdf.getTextWidth(task.realizedValue) + 2;
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(`/ ${task.objectiveValue}`, objectiveX, y + 11.6);
       progressBar(
         margin + 82,
         y + 3.2,

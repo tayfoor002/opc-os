@@ -538,7 +538,7 @@ export function ReportingWorkspace() {
         .filter((zone) => selectedZoneIds.includes(zone.id))
         .map((zone) => zone.name)
         .join(", ")}`
-    : "Périmètre global - toutes les zones";
+    : "";
   const distinctLocationNames = [
     ...new Set(
       reportActivities.map(
@@ -588,7 +588,7 @@ export function ReportingWorkspace() {
           : "Calcul OPC OS à partir des tâches",
         globalGainStatus: globalGainHasReference
           ? "Gain calculé depuis le relevé de référence"
-          : "État initial - le gain commencera au prochain relevé",
+          : "",
       },
       activities: reportActivities.map((activity) => {
         const activityAnalysis = activityProgressAnalysis(activity.id);
@@ -631,12 +631,14 @@ export function ReportingWorkspace() {
               baselineProgress: analysis.baseline,
               currentProgress: analysis.current,
               periodIncrease: analysis.periodIncrease,
-              measurement:
+              realizedValue:
                 task.progress_mode === "quantity"
-                  ? `Réalisé ${Math.round(analysis.quantityAtPeriodEnd * 100) / 100} ${task.progress_unit || "u"} • Objectif ${Number(task.target_quantity ?? 0)} ${task.progress_unit || "u"}`
-                  : task.progress_mode === "building"
-                    ? `${buildingPhases.filter((phase) => phase.task_id === task.id).length} étapes de construction`
-                    : "Échelle de mesure : 0 à 100 %",
+                  ? `${Math.round(analysis.quantityAtPeriodEnd * 100) / 100} ${task.progress_unit || "u"}`
+                  : `${analysis.current}%`,
+              objectiveValue:
+                task.progress_mode === "quantity"
+                  ? `${Number(task.target_quantity ?? 0)} ${task.progress_unit || "u"}`
+                  : "100%",
               buildingSteps: buildingPhases
                 .filter((phase) => phase.task_id === task.id)
                 .sort((left, right) => left.sort_order - right.sort_order)
@@ -1100,7 +1102,9 @@ export function ReportingWorkspace() {
             </p>
             <p className="mt-2 font-bold capitalize text-[var(--opc-blue)]">{periodSubtitle(type, period.start, period.end)}</p>
             <p className="mt-1 text-xs text-slate-500">{period.start} → {period.end}</p>
-            <p className="mt-2 text-xs font-black uppercase text-[var(--opc-red)]">{scopeTitle}</p>
+            {scopeTitle ? (
+              <p className="mt-2 text-xs font-black uppercase text-[var(--opc-red)]">{scopeTitle}</p>
+            ) : null}
           </div>
 
           <div className="p-8">
@@ -1123,14 +1127,12 @@ export function ReportingWorkspace() {
                   </div>
                   <div className="rounded-2xl bg-emerald-400/15 px-5 py-3 text-right">
                     <p className="text-[10px] font-black uppercase tracking-wide text-emerald-200">Gain période</p>
-                    <p className="mt-1 text-3xl font-black text-emerald-300">
-                      {globalGainHasReference ? `+${globalGain}%` : "État initial"}
-                    </p>
-                    <p className="mt-1 max-w-56 text-[9px] font-semibold text-emerald-100">
-                      {globalGainHasReference
-                        ? "Comparé au relevé précédent"
-                        : "Le gain commencera au prochain relevé"}
-                    </p>
+                    <p className="mt-1 text-3xl font-black text-emerald-300">+{globalGain}%</p>
+                    {globalGainHasReference ? (
+                      <p className="mt-1 max-w-56 text-[9px] font-semibold text-emerald-100">
+                        Comparé au relevé précédent
+                      </p>
+                    ) : null}
                   </div>
                 </div>
                 <SegmentedProgressBar
@@ -1224,13 +1226,19 @@ export function ReportingWorkspace() {
                                         · {prerequisite?.total_requirements && prerequisiteMissing === 0 ? "Prérequis OK" : "Prérequis à vérifier"}
                                       </span>
                                     </p>
-                                    <p className="mt-2 inline-flex rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-800">
-                                      {task.progress_mode === "quantity"
-                                        ? `Réalisé ${Math.round(analysis.quantityAtPeriodEnd * 100) / 100} ${task.progress_unit || "u"} / ${Number(task.target_quantity ?? 0)} ${task.progress_unit || "u"}`
-                                        : task.progress_mode === "building"
-                                          ? `${buildingPhases.filter((phase) => phase.task_id === task.id).length} étapes de construction`
-                                          : "Mesure en pourcentage"}
-                                    </p>
+                                    <div className="mt-2 inline-flex items-baseline gap-2 rounded-lg bg-emerald-50 px-3 py-2">
+                                      <span className="text-[9px] font-black uppercase tracking-wide text-slate-600">Réalisé / Objectif</span>
+                                      <strong className="text-sm font-black text-emerald-700">
+                                        {task.progress_mode === "quantity"
+                                          ? `${Math.round(analysis.quantityAtPeriodEnd * 100) / 100} ${task.progress_unit || "u"}`
+                                          : `${analysis.current}%`}
+                                      </strong>
+                                      <span className="text-sm font-black text-black">
+                                        / {task.progress_mode === "quantity"
+                                          ? `${Number(task.target_quantity ?? 0)} ${task.progress_unit || "u"}`
+                                          : "100%"}
+                                      </span>
+                                    </div>
                                     </div>
                                     <SegmentedProgressBar baseline={analysis.baseline} current={analysis.current} gain={analysis.periodIncrease} compact />
                                     <div className="text-right">
