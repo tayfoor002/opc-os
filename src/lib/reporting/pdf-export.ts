@@ -249,8 +249,11 @@ export async function downloadReportPdf(
       });
       return;
     }
+    const photoHeight = 52;
+    const cardHeight = 76;
+    const rowHeight = 81;
     for (let index = 0; index < data.photos.length; index += 2) {
-      ensure(72);
+      ensure(rowHeight);
       const pair = data.photos.slice(index, index + 2);
       const gap = 6;
       const cardWidth = (contentWidth - gap) / 2;
@@ -259,20 +262,20 @@ export async function downloadReportPdf(
         const x = margin + offset * (cardWidth + gap);
         pdf.setDrawColor(...border);
         pdf.setFillColor(248, 250, 252);
-        pdf.roundedRect(x, y, cardWidth, 67, 2, 2, "FD");
+        pdf.roundedRect(x, y, cardWidth, cardHeight, 2, 2, "FD");
         try {
           const image = await loadPdfImage(photo.url);
           const dimensions = fitInside(
             image.width,
             image.height,
             cardWidth - 6,
-            43,
+            photoHeight,
           );
           pdf.addImage(
             image.bytes,
             image.format,
             x + (cardWidth - dimensions.width) / 2,
-            y + 3 + (43 - dimensions.height) / 2,
+            y + 3 + (photoHeight - dimensions.height) / 2,
             dimensions.width,
             dimensions.height,
           );
@@ -286,15 +289,15 @@ export async function downloadReportPdf(
         pdf.setFont("helvetica", "bold");
         pdf.setTextColor(...navy);
         pdf.setFontSize(7.5);
-        pdf.text(`Photo ${index + offset + 1} - ${photo.activity}`, x + 3, y + 51);
+        pdf.text(`Photo ${index + offset + 1} - ${photo.activity}`, x + 3, y + 60);
         pdf.setFont("helvetica", "normal");
         pdf.setTextColor(...slate);
         pdf.setFontSize(6.8);
-        pdf.text(`${photo.task} | ${photo.date}`, x + 3, y + 56);
+        pdf.text(`${photo.task} | ${photo.date}`, x + 3, y + 65);
         const caption = pdf.splitTextToSize(photo.caption || "-", cardWidth - 6) as string[];
-        pdf.text(caption.slice(0, 2), x + 3, y + 61);
+        pdf.text(caption.slice(0, 2), x + 3, y + 70);
       }
-      y += 72;
+      y += rowHeight;
     }
   };
 
