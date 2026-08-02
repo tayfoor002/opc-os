@@ -95,6 +95,7 @@ export async function downloadReportPdf(
   const red: [number, number, number] = [237, 27, 47];
   const navy: [number, number, number] = [15, 39, 71];
   const blue: [number, number, number] = [0, 80, 164];
+  const green: [number, number, number] = [16, 185, 129];
   const slate: [number, number, number] = [71, 85, 105];
   const pale: [number, number, number] = [234, 242, 250];
   const border: [number, number, number] = [216, 225, 234];
@@ -202,6 +203,39 @@ export async function downloadReportPdf(
       y += 1.5;
     }
   };
+  const progressBar = (
+    x: number,
+    barY: number,
+    width: number,
+    height: number,
+    baseline: number,
+    current: number,
+    gain: number,
+  ) => {
+    const safeCurrent = Math.max(0, Math.min(100, current));
+    const safeBaseline = Math.max(0, Math.min(safeCurrent, baseline));
+    const safeGain = Math.max(
+      0,
+      Math.min(safeCurrent - safeBaseline, gain),
+    );
+    const acquired = Math.max(0, safeCurrent - safeGain);
+    pdf.setFillColor(226, 232, 240);
+    pdf.roundedRect(x, barY, width, height, height / 2, height / 2, "F");
+    if (acquired > 0) {
+      pdf.setFillColor(...blue);
+      pdf.rect(x, barY, (width * acquired) / 100, height, "F");
+    }
+    if (safeGain > 0) {
+      pdf.setFillColor(...green);
+      pdf.rect(
+        x + (width * acquired) / 100,
+        barY,
+        (width * safeGain) / 100,
+        height,
+        "F",
+      );
+    }
+  };
 
   header();
   pdf.setFont("helvetica", "bold");
@@ -223,12 +257,42 @@ export async function downloadReportPdf(
   y += 30;
 
   section(1, "SYNTHÈSE EXÉCUTIVE");
+  ensure(42);
+  pdf.setFillColor(...navy);
+  pdf.roundedRect(margin, y, contentWidth, 30, 3, 3, "F");
+  pdf.setFont("helvetica", "bold");
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFontSize(9);
+  pdf.text("AVANCEMENT GLOBAL", margin + 5, y + 7);
+  pdf.setFontSize(24);
+  pdf.text(`${data.metrics.globalProgress}%`, margin + 5, y + 18);
+  pdf.setTextColor(...green);
+  pdf.setFontSize(13);
+  pdf.text(`+${data.metrics.globalGain}%`, margin + 36, y + 18);
+  progressBar(
+    margin + 55,
+    y + 10,
+    contentWidth - 61,
+    6,
+    data.metrics.globalBaseline,
+    data.metrics.globalProgress,
+    data.metrics.globalGain,
+  );
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(203, 213, 225);
+  pdf.setFontSize(7);
+  pdf.text(data.metrics.globalSource, margin + 55, y + 23);
+  pdf.text(
+    `Acquis ${data.metrics.globalBaseline}%  |  Gain +${data.metrics.globalGain}%  |  Reste ${Math.max(0, Math.round((100 - data.metrics.globalProgress) * 10) / 10)}%`,
+    margin + 55,
+    y + 27,
+  );
+  y += 35;
+
   const metrics: Array<[string, string | number]> = [
     ["Terminées", data.metrics.completed],
     ["En cours", data.metrics.inProgress],
     ["Bloquées", data.metrics.blocked],
-    ["Avancement moyen", `${data.metrics.averageProgress}%`],
-    ["Gain période", `+${data.metrics.periodIncrease} pts`],
     ["Mises à jour", data.metrics.updates],
   ];
   const metricGap = 3;
@@ -238,17 +302,17 @@ export async function downloadReportPdf(
     const x = margin + index * (metricWidth + metricGap);
     pdf.setDrawColor(...border);
     pdf.setFillColor(255, 255, 255);
-    pdf.roundedRect(x, y, metricWidth, 20, 2, 2, "FD");
+    pdf.roundedRect(x, y, metricWidth, 16, 2, 2, "FD");
     pdf.setFont("helvetica", "bold");
     pdf.setTextColor(...red);
     pdf.setFontSize(14);
-    pdf.text(String(value), x + metricWidth / 2, y + 9, { align: "center" });
+    pdf.text(String(value), x + metricWidth / 2, y + 7, { align: "center" });
     pdf.setFont("helvetica", "normal");
     pdf.setTextColor(...slate);
     pdf.setFontSize(7);
-    pdf.text(label, x + metricWidth / 2, y + 16, { align: "center" });
+    pdf.text(label, x + metricWidth / 2, y + 13, { align: "center" });
   });
-  y += 25;
+  y += 21;
 
   section(2, "DÉTAIL DES ACTIVITÉS ET TÂCHES");
   if (!data.activities.length) {
@@ -270,75 +334,87 @@ export async function downloadReportPdf(
       pdf.text(`ZONE : ${currentZone.toUpperCase()}`, margin + 4, y + 6);
       y += 13;
     }
-    ensure(28);
-    pdf.setFillColor(...navy);
-    pdf.roundedRect(margin, y, contentWidth, 11, 1.5, 1.5, "F");
+    ensure(27);
+    pdf.setFillColor(...pale);
+    pdf.roundedRect(margin, y, contentWidth, 23, 2, 2, "F");
     pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(255, 255, 255);
-    pdf.setFontSize(9);
-    pdf.text(`${activity.code} - ${activity.name}`, margin + 4, y + 7);
-    pdf.text(`${activity.progress}%`, pageWidth - margin - 4, y + 7, {
+    pdf.setTextColor(...navy);
+    pdf.setFontSize(10);
+    pdf.text(`${activity.code} - ${activity.name}`, margin + 4, y + 6);
+    pdf.setFontSize(14);
+    pdf.setTextColor(...blue);
+    pdf.text(`${activity.progress}%`, pageWidth - margin - 24, y + 7, {
       align: "right",
     });
-    y += 15;
-    wrapped(
-      `${activity.location} | Alstom: ${activity.alstom} | Avanzit: ${activity.avanzit}`,
-      margin + 2,
-      contentWidth - 4,
-      { color: slate, size: 7.5, lineHeight: 3.4 },
+    pdf.setTextColor(...green);
+    pdf.setFontSize(9);
+    pdf.text(`+${activity.periodIncrease}%`, pageWidth - margin - 4, y + 7, {
+      align: "right",
+    });
+    progressBar(
+      margin + 4,
+      y + 11,
+      contentWidth - 8,
+      4,
+      activity.baselineProgress,
+      activity.progress,
+      activity.periodIncrease,
     );
-    y += 2;
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(...slate);
+    pdf.setFontSize(6.8);
+    pdf.text(
+      `${activity.location}  |  ${activity.tasks.length} tâche(s)`,
+      margin + 4,
+      y + 20,
+    );
+    y += 27;
     if (!activity.tasks.length) {
       wrapped("Aucune tâche associée.", margin + 3, contentWidth - 6, {
         color: slate,
       });
     }
     for (const task of activity.tasks) {
-      const summaryLines = pdf.splitTextToSize(
-        task.workSummary || "-",
-        contentWidth - 169,
-      ) as string[];
-      const rowHeight = Math.max(23, summaryLines.length * 3.4 + 8);
-      ensure(rowHeight + 3);
-      pdf.setFillColor(248, 250, 252);
-      pdf.setDrawColor(...border);
-      pdf.roundedRect(margin, y, contentWidth, rowHeight, 1.5, 1.5, "FD");
+      const rowHeight = 11;
+      ensure(rowHeight + 2);
+      pdf.setDrawColor(226, 232, 240);
+      pdf.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
       pdf.setFont("helvetica", "bold");
       pdf.setTextColor(...navy);
-      pdf.setFontSize(8);
-      pdf.text(pdf.splitTextToSize(task.title, 56) as string[], margin + 3, y + 5);
+      pdf.setFontSize(7.5);
+      pdf.text(
+        (pdf.splitTextToSize(task.title, 70) as string[]).slice(0, 1),
+        margin + 3,
+        y + 4.5,
+      );
       pdf.setFont("helvetica", "normal");
       pdf.setTextColor(...slate);
-      pdf.setFontSize(7);
+      pdf.setFontSize(6.3);
       pdf.text(
-        [
-          `État: ${task.status}`,
-          `Prérequis: ${task.prerequisiteStatus}`,
-          task.prerequisiteDetails,
-          `Alstom: ${task.alstom}`,
-          `Avanzit: ${task.avanzit}`,
-        ],
-        margin + 62,
-        y + 5,
+        `${task.status} · ${task.prerequisiteStatus}`,
+        margin + 3,
+        y + 8.2,
+      );
+      progressBar(
+        margin + 82,
+        y + 3.2,
+        contentWidth - 122,
+        3.5,
+        task.baselineProgress,
+        task.currentProgress,
+        task.periodIncrease,
       );
       pdf.setFont("helvetica", "bold");
       pdf.setTextColor(...blue);
-      pdf.text(
-        [
-          `Actuel: ${task.currentProgress}%`,
-          `Gain: +${task.periodIncrease} pts`,
-          `Quantité: ${task.quantitySummary}`,
-          `Rendement: ${task.periodOutput}`,
-          `Contribution: ${task.activityContribution.toFixed(1)} pts`,
-          `Gain activité: +${task.periodContribution.toFixed(1)} pts`,
-        ],
-        margin + 112,
-        y + 5,
-      );
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(...slate);
-      pdf.text(summaryLines, margin + 169, y + 5);
-      y += rowHeight + 3;
+      pdf.setFontSize(8);
+      pdf.text(`${task.currentProgress}%`, pageWidth - margin - 19, y + 5.5, {
+        align: "right",
+      });
+      pdf.setTextColor(...green);
+      pdf.text(`+${task.periodIncrease}%`, pageWidth - margin - 3, y + 5.5, {
+        align: "right",
+      });
+      y += rowHeight;
     }
     y += 2;
   }

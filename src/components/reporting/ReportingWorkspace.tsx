@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  BarChart3,
   CalendarDays,
   CheckCircle2,
   Clock3,
@@ -95,6 +94,12 @@ type TaskPrerequisiteStatus = {
   invalid_equipment: number;
   missing_manual_items: number;
 };
+type ProgressImport = {
+  report_date: string;
+  global_progress: number;
+  source_file_name: string;
+  zone_element_id: string | null;
+};
 
 const reportLabels: Record<ReportType, string> = {
   daily: "Rapport journalier",
@@ -153,6 +158,7 @@ export function ReportingWorkspace() {
   const [taskEquipment, setTaskEquipment] = useState<TaskEquipmentResource[]>([]);
   const [taskPrerequisites, setTaskPrerequisites] =
     useState<TaskPrerequisiteStatus[]>([]);
+  const [progressImports, setProgressImports] = useState<ProgressImport[]>([]);
   const [type, setType] = useState<ReportType>("daily");
   const today = isoDate(new Date());
   const [periodStart, setPeriodStart] = useState(today);
@@ -178,7 +184,7 @@ export function ReportingWorkspace() {
       return;
     }
 
-    const [activityResult, taskResult, updateResult, peopleResult, zonesResult, elementsResult] =
+    const [activityResult, taskResult, updateResult, peopleResult, zonesResult, elementsResult, progressImportsResult] =
       await Promise.all([
         supabase.from("activities").select("*").eq("project_id", project.data.id).order("code"),
         supabase
@@ -207,6 +213,12 @@ export function ReportingWorkspace() {
           .select("id,zone_id,code,name,element_type")
           .eq("project_id", project.data.id)
           .eq("active", true),
+        supabase
+          .from("progress_imports")
+          .select("report_date,global_progress,source_file_name,zone_element_id")
+          .eq("project_id", project.data.id)
+          .order("report_date", { ascending: true })
+          .limit(200),
       ]);
 
     const firstError = [
@@ -216,6 +228,7 @@ export function ReportingWorkspace() {
       peopleResult.error,
       zonesResult.error,
       elementsResult.error,
+      progressImportsResult.error,
     ].find(Boolean);
     if (firstError) {
       setError(
@@ -229,6 +242,7 @@ export function ReportingWorkspace() {
       setCollaborators((peopleResult.data ?? []) as CollaboratorOption[]);
       setZones((zonesResult.data ?? []) as ZoneOption[]);
       setZoneElements((elementsResult.data ?? []) as ZoneElementOption[]);
+      setProgressImports((progressImportsResult.data ?? []) as ProgressImport[]);
       const taskIds = (taskResult.data ?? []).map((task) => task.id);
       if (taskIds.length) {
         const [resourcesResult, equipmentLinkResult, prerequisiteResult] =
@@ -340,7 +354,7 @@ export function ReportingWorkspace() {
     );
     const baseline = Number(beforePeriod.at(-1)?.progress ?? 0);
     const progressAtPeriodEnd = Number(
-      throughPeriod.at(-1)?.progress ?? baseline,
+      throughPeriod.at(-1)?.progress ?? task.progress ?? baseline,
     );
     const periodIncrease = Math.max(0, progressAtPeriodEnd - baseline);
     const targetQuantity = Number(task.target_quantity ?? 0);
@@ -364,7 +378,7 @@ export function ReportingWorkspace() {
       tasks.filter((item) => item.activity_id === task.activity_id).length,
     );
     return {
-      current: Number(task.progress || 0),
+      current: progressAtPeriodEnd,
       baseline,
       progressAtPeriodEnd,
       periodIncrease,
@@ -385,6 +399,55 @@ export function ReportingWorkspace() {
           10,
       ) / 10
     : 0;
+  const scopedImports = progressImports.filter((item) => {
+    if (!selectedZoneIds.length || !item.zone_element_id) return true;
+    const element = zoneElements.find(
+      (candidate) => candidate.id === item.zone_element_id,
+    );
+    return Boolean(element?.zone_id && selectedZoneIds.includes(element.zone_id));
+  });
+  const importsThroughPeriod = scopedImports.filter(
+    (item) => item.report_date <= period.end,
+  );
+  const latestGlobalImport = importsThroughPeriod.at(-1);
+  const baselineGlobalImport = scopedImports
+    .filter((item) => item.report_date < period.start)
+    .at(-1);
+  const globalProgress = Number(
+    latestGlobalImport?.global_progress ?? averageProgress,
+  );
+  const globalBaseline = Number(
+    baselineGlobalImport?.global_progress ??
+      Math.max(0, globalProgress - averagePeriodIncrease),
+  );
+  const globalGain = Math.max(
+    0,
+    Math.round((globalProgress - globalBaseline) * 10) / 10,
+  );
+  const activityProgressAnalysis = (activityId: string) => {
+    const activityTasks = relevantTasks.filter(
+      (task) => task.activity_id === activityId,
+    );
+    if (!activityTasks.length) {
+      const activity = activities.find((item) => item.id === activityId);
+      const progress = Number(activity?.progress ?? 0);
+      return { baseline: progress, current: progress, gain: 0 };
+    }
+    const analyses = activityTasks.map(taskProgressAnalysis);
+    const baseline =
+      analyses.reduce((total, analysis) => total + analysis.baseline, 0) /
+      analyses.length;
+    const current =
+      analyses.reduce(
+        (total, analysis) => total + analysis.progressAtPeriodEnd,
+        0,
+      ) / analyses.length;
+    return {
+      baseline: Math.round(baseline * 10) / 10,
+      current: Math.round(current * 10) / 10,
+      gain: Math.round(Math.max(0, current - baseline) * 10) / 10,
+    };
+  };
   const collaboratorName = (id: string | null) =>
     collaborators.find((person) => person.id === id)?.full_name ?? "À affecter";
   const elementName = (id: string | null) =>
@@ -416,8 +479,16 @@ export function ReportingWorkspace() {
         averageProgress,
         periodIncrease: averagePeriodIncrease,
         updates: reportUpdates.length,
+        globalProgress,
+        globalBaseline,
+        globalGain,
+        globalSource: latestGlobalImport
+          ? `${latestGlobalImport.source_file_name} · ${latestGlobalImport.report_date}`
+          : "Calcul OPC OS à partir des tâches",
       },
-      activities: reportActivities.map((activity) => ({
+      activities: reportActivities.map((activity) => {
+        const activityAnalysis = activityProgressAnalysis(activity.id);
+        return {
         zone: zoneName(activity.zone_id),
         code: activity.code,
         name: activity.name,
@@ -427,7 +498,9 @@ export function ReportingWorkspace() {
           "Zone non définie",
         alstom: collaboratorName(activity.alstom_supervisor_id),
         avanzit: collaboratorName(activity.avanzit_site_manager_id),
-        progress: Number(activity.progress || 0),
+        baselineProgress: activityAnalysis.baseline,
+        progress: activityAnalysis.current,
+        periodIncrease: activityAnalysis.gain,
         tasks: relevantTasks
           .filter((task) => task.activity_id === activity.id)
           .sort((left, right) => left.title.localeCompare(right.title, "fr"))
@@ -451,18 +524,11 @@ export function ReportingWorkspace() {
               alstom: collaboratorName(task.alstom_supervisor_id),
               avanzit: collaboratorName(task.avanzit_site_manager_id),
               status: task.status,
+              baselineProgress: analysis.baseline,
               currentProgress: analysis.current,
               periodIncrease: analysis.periodIncrease,
               activityContribution: analysis.activityContribution,
               periodContribution: analysis.periodContribution,
-              quantitySummary:
-                task.progress_mode === "quantity"
-                  ? `${Number(task.completed_quantity ?? 0)} / ${Number(task.target_quantity ?? 0)} ${task.progress_unit || "u"}`
-                  : "Suivi en pourcentage",
-              periodOutput:
-                task.progress_mode === "quantity"
-                  ? `+${Math.round(analysis.periodOutput * 100) / 100} ${task.progress_unit || "u"}`
-                  : `+${analysis.periodIncrease} pts`,
               workSummary:
                 taskUpdates
                   .map(
@@ -502,7 +568,8 @@ export function ReportingWorkspace() {
                 : "Aucun prérequis configuré",
             };
           }),
-      })),
+        };
+      }),
       completedWork: reportUpdates
         .map((update) => update.work_done)
         .filter(Boolean) as string[],
@@ -840,78 +907,72 @@ export function ReportingWorkspace() {
               <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">
                 1. Synthèse exécutive
               </h3>
-              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-              <Metric icon={CheckCircle2} label="Terminées" value={completed} tone="green" />
-              <Metric icon={Clock3} label="En cours" value={inProgress} tone="blue" />
-              <Metric icon={AlertTriangle} label="Bloquées" value={blocked} tone="red" />
-              <Metric icon={BarChart3} label="Avancement moyen" value={`${averageProgress}%`} tone="blue" />
-              <Metric icon={BarChart3} label="Gain sur la période" value={`+${averagePeriodIncrease} pts`} tone="green" />
-              <Metric icon={CalendarDays} label="Mises à jour" value={reportUpdates.length} />
+              <div className="mt-4 rounded-2xl bg-[var(--opc-ink)] p-6 text-white">
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-200">
+                      Avancement global
+                    </p>
+                    <p className="mt-2 text-5xl font-black">{globalProgress}%</p>
+                    <p className="mt-2 text-xs text-slate-300">
+                      {latestGlobalImport
+                        ? `Source : ${latestGlobalImport.source_file_name} · ${latestGlobalImport.report_date}`
+                        : "Source : moyenne des tâches OPC OS"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-emerald-400/15 px-5 py-3 text-right">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-emerald-200">Gain période</p>
+                    <p className="mt-1 text-3xl font-black text-emerald-300">+{globalGain}%</p>
+                  </div>
+                </div>
+                <SegmentedProgressBar
+                  baseline={globalBaseline}
+                  current={globalProgress}
+                  gain={globalGain}
+                  dark
+                  large
+                />
+                <div className="mt-3 flex flex-wrap gap-4 text-[10px] font-bold text-slate-300">
+                  <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-500" /> Acquis avant période {globalBaseline}%</span>
+                  <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-400" /> Gain +{globalGain}%</span>
+                  <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-slate-600" /> Reste {Math.max(0, Math.round((100 - globalProgress) * 10) / 10)}%</span>
+                </div>
               </div>
-              <div className="mt-4 grid gap-3 rounded-xl border border-[var(--opc-border)] bg-slate-50 p-4 text-xs text-slate-600 md:grid-cols-4">
-                <p><strong>Projet :</strong><br />PDD - Marché N° 625C07</p>
-                <p><strong>Période :</strong><br />{period.start} → {period.end}</p>
-                <p><strong>Activités couvertes :</strong><br />{reportActivities.length}</p>
-                <p><strong>Établi le :</strong><br />{new Intl.DateTimeFormat("fr-FR", { dateStyle: "long" }).format(new Date())}</p>
+              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+                <Metric icon={CheckCircle2} label="Terminées" value={completed} tone="green" />
+                <Metric icon={Clock3} label="En cours" value={inProgress} tone="blue" />
+                <Metric icon={AlertTriangle} label="Bloquées" value={blocked} tone="red" />
+                <Metric icon={CalendarDays} label="Mises à jour" value={reportUpdates.length} />
               </div>
             </section>
 
             <section className="mt-8">
-              <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">
-                2. Analyse de l’avancement
-              </h3>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                Le gain de période correspond à la différence entre le dernier avancement connu avant la période et le dernier relevé enregistré pendant celle-ci. La contribution à l’activité est calculée à poids égal entre toutes les tâches de l’activité parente.
-              </p>
-            </section>
-
-            <section className="mt-8">
-              <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">3. Synthèse détaillée par activité</h3>
+              <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">2. Avancement par activité</h3>
               <div className="mt-4 space-y-5">
                 {reportActivities.map((activity) => {
                   const activityTasks = relevantTasks.filter((task) => task.activity_id === activity.id);
-                  const activityUpdates = reportUpdates.filter((update) =>
-                    activityTasks.some((task) => task.id === update.task_id),
-                  );
+                  const activityAnalysis = activityProgressAnalysis(activity.id);
                   return (
-                    <div key={activity.id} className="rounded-xl border border-[var(--opc-border)] p-4">
+                    <div key={activity.id} className="overflow-hidden rounded-2xl border border-[var(--opc-border)] bg-white shadow-sm">
                       <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-black text-[var(--opc-red)]">{activity.code}</p>
-                          <h4 className="mt-1 font-black">{activity.name}</h4>
-                          <p className="mt-1 text-xs font-black uppercase text-[var(--opc-blue)]">
-                            {zoneName(activity.zone_id)}
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {elementName(activity.zone_element_id) || activity.zone || "Zone non définie"}
-                          </p>
-                        </div>
-                        <div className="text-right text-xs text-slate-600">
-                          <p className="mb-2 text-base font-black text-[var(--opc-blue)]">
-                            Avancement activité : {activity.progress}%
-                          </p>
-                          <p><strong>Alstom :</strong> {collaboratorName(activity.alstom_supervisor_id)}</p>
-                          <p className="mt-1"><strong>Avanzit :</strong> {collaboratorName(activity.avanzit_site_manager_id)}</p>
+                        <div className="w-full bg-slate-50 px-5 py-4">
+                          <div className="flex flex-wrap items-center justify-between gap-4">
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-wide text-[var(--opc-red)]">
+                                {activity.code} · {zoneName(activity.zone_id)} · {elementName(activity.zone_element_id) || activity.zone}
+                              </p>
+                              <h4 className="mt-1 text-base font-black">{activity.name}</h4>
+                            </div>
+                            <div className="flex items-center gap-5">
+                              <p className="text-2xl font-black text-[var(--opc-blue)]">{activityAnalysis.current}%</p>
+                              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-700">+{activityAnalysis.gain}%</span>
+                            </div>
+                          </div>
+                          <SegmentedProgressBar baseline={activityAnalysis.baseline} current={activityAnalysis.current} gain={activityAnalysis.gain} />
                         </div>
                       </div>
-                      <div className="mt-4 overflow-x-auto">
-                        <table className="w-full min-w-[1080px] text-left text-xs">
-                          <thead className="bg-slate-50 uppercase text-slate-500">
-                            <tr>
-                              <th className="p-3">Tâche</th>
-                              <th className="p-3">Responsables</th>
-                              <th className="p-3">Statut</th>
-                              <th className="p-3">Prérequis</th>
-                              <th className="p-3">État actuel</th>
-                              <th className="p-3">Gain période</th>
-                              <th className="p-3">Quantité / rendement</th>
-                              <th className="p-3">Part de l’activité</th>
-                              <th className="p-3">Travaux de la période</th>
-                            </tr>
-                          </thead>
-                          <tbody>
+                      <div className="divide-y divide-slate-100 px-5">
                             {activityTasks.map((task) => {
-                              const taskUpdates = activityUpdates.filter((update) => update.task_id === task.id);
                               const analysis = taskProgressAnalysis(task);
                               const prerequisite = taskPrerequisites.find(
                                 (item) => item.task_id === task.id,
@@ -924,76 +985,25 @@ export function ReportingWorkspace() {
                                   Number(prerequisite.missing_manual_items)
                                 : 0;
                               return (
-                                <tr key={task.id} className="border-t border-slate-100 align-top">
-                                  <td className="p-3 font-bold">{task.title}</td>
-                                  <td className="p-3 text-slate-600">
-                                    A: {collaboratorName(task.alstom_supervisor_id)}<br />
-                                    V: {collaboratorName(task.avanzit_site_manager_id)}
-                                  </td>
-                                  <td className="p-3">{task.status}</td>
-                                  <td className="p-3">
-                                    <span
-                                      className={`rounded-full px-2 py-1 text-[10px] font-black ${
-                                        prerequisite?.total_requirements &&
-                                        prerequisiteMissing === 0
-                                          ? "bg-emerald-50 text-emerald-700"
-                                          : "bg-red-50 text-red-700"
-                                      }`}
-                                    >
-                                      {prerequisite?.total_requirements
-                                        ? prerequisiteMissing
-                                          ? `${prerequisiteMissing} anomalie(s)`
-                                          : "Conforme"
-                                        : "À configurer"}
-                                    </span>
-                                  </td>
-                                  <td className="p-3">
-                                    <div className="font-black text-[var(--opc-blue)]">{analysis.current}%</div>
-                                    <div className="mt-1 h-1.5 w-24 overflow-hidden rounded-full bg-slate-100">
-                                      <div className="h-full rounded-full bg-[var(--opc-blue)]" style={{ width: `${analysis.current}%` }} />
-                                    </div>
-                                  </td>
-                                  <td className="p-3">
-                                    <span className="rounded-full bg-emerald-50 px-2 py-1 font-black text-emerald-700">
-                                      +{analysis.periodIncrease} pts
-                                    </span>
-                                    <p className="mt-2 text-[10px] text-slate-400">
-                                      {analysis.baseline}% → {analysis.progressAtPeriodEnd}%
+                                <div key={task.id} className="grid items-center gap-3 py-3 md:grid-cols-[minmax(180px,0.85fr)_minmax(260px,1.5fr)_90px]">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-xs font-black">{task.title}</p>
+                                    <p className="mt-1 flex items-center gap-2 text-[9px] font-bold uppercase text-slate-400">
+                                      <span className={`h-2 w-2 rounded-full ${task.status === "done" ? "bg-emerald-500" : task.status === "blocked" ? "bg-red-500" : "bg-blue-500"}`} />
+                                      {task.status}
+                                      <span className={prerequisite?.total_requirements && prerequisiteMissing === 0 ? "text-emerald-600" : "text-red-500"}>
+                                        · {prerequisite?.total_requirements && prerequisiteMissing === 0 ? "Prérequis OK" : `${prerequisiteMissing || "?"} anomalie(s)`}
+                                      </span>
                                     </p>
-                                  </td>
-                                  <td className="p-3">
-                                    {task.progress_mode === "quantity" ? (
-                                      <>
-                                        <p className="font-black text-[var(--opc-blue)]">
-                                          {Number(task.completed_quantity ?? 0)} / {Number(task.target_quantity ?? 0)} {task.progress_unit || "u"}
-                                        </p>
-                                        <p className="mt-1 text-[10px] font-black text-emerald-700">
-                                          Rendement période : +{Math.round(analysis.periodOutput * 100) / 100} {task.progress_unit || "u"}
-                                        </p>
-                                      </>
-                                    ) : (
-                                      <span className="text-[10px] text-slate-400">Suivi en pourcentage</span>
-                                    )}
-                                  </td>
-                                  <td className="p-3">
-                                    <p className="font-black">{analysis.activityContribution.toFixed(1)} pts</p>
-                                    <p className="mt-1 text-[10px] text-slate-500">
-                                      Gain activité : +{analysis.periodContribution.toFixed(1)} pts
-                                    </p>
-                                    <p className="mt-1 text-[10px] text-slate-400">
-                                      Pondération 1/{analysis.parentTaskCount}
-                                    </p>
-                                  </td>
-                                  <td className="p-3 text-slate-600">
-                                    {taskUpdates.length
-                                      ? taskUpdates.map((update) => update.work_done || update.ongoing_work || update.comment).filter(Boolean).join(" · ")
-                                      : "Aucune mise à jour saisie sur la période"}
-                                  </td>
-                                </tr>
+                                  </div>
+                                  <SegmentedProgressBar baseline={analysis.baseline} current={analysis.current} gain={analysis.periodIncrease} compact />
+                                  <div className="text-right">
+                                    <p className="text-base font-black text-[var(--opc-blue)]">{analysis.current}%</p>
+                                    <p className="text-[10px] font-black text-emerald-600">+{analysis.periodIncrease}%</p>
+                                  </div>
+                                </div>
                               );
                             })}
-                          </tbody>
-                        </table>
                       </div>
                     </div>
                   );
@@ -1008,7 +1018,7 @@ export function ReportingWorkspace() {
 
             <section className="mt-8">
               <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">
-                4. Ressources mobilisées
+                3. Ressources mobilisées
               </h3>
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <ReportList
@@ -1028,18 +1038,18 @@ export function ReportingWorkspace() {
 
             <section className="mt-8">
               <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">
-                5. Production, contraintes et prévisions
+                4. Production, contraintes et prévisions
               </h3>
               <div className="mt-4 grid gap-5 md:grid-cols-2">
-                <ReportList title="5.1 Travaux réalisés" values={reportUpdates.map((update) => update.work_done).filter(Boolean) as string[]} />
-                <ReportList title="5.2 Travaux en cours" values={reportUpdates.map((update) => update.ongoing_work).filter(Boolean) as string[]} />
-                <ReportList title="5.3 Blocages / risques / alertes" values={reportUpdates.map((update) => update.blockers).filter(Boolean) as string[]} red />
-                <ReportList title="5.4 Prochaines étapes" values={reportUpdates.map((update) => update.next_steps).filter(Boolean) as string[]} />
+                <ReportList title="4.1 Travaux réalisés" values={reportUpdates.map((update) => update.work_done).filter(Boolean) as string[]} />
+                <ReportList title="4.2 Travaux en cours" values={reportUpdates.map((update) => update.ongoing_work).filter(Boolean) as string[]} />
+                <ReportList title="4.3 Blocages / risques / alertes" values={reportUpdates.map((update) => update.blockers).filter(Boolean) as string[]} red />
+                <ReportList title="4.4 Prochaines étapes" values={reportUpdates.map((update) => update.next_steps).filter(Boolean) as string[]} />
               </div>
             </section>
 
             <section className="mt-8 break-before-page">
-                <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">6. Planches photographiques</h3>
+                <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">5. Planches photographiques</h3>
                 <div className="mt-4 space-y-6">
                   {reportActivities.map((activity) => {
                     const activityTaskIds = new Set(
@@ -1149,6 +1159,37 @@ function Metric({
       <Icon className="h-5 w-5" />
       <p className="mt-3 text-2xl font-black">{value}</p>
       <p className="mt-1 text-[10px] font-black uppercase">{label}</p>
+    </div>
+  );
+}
+
+function SegmentedProgressBar({
+  baseline,
+  current,
+  gain,
+  compact = false,
+  large = false,
+  dark = false,
+}: {
+  baseline: number;
+  current: number;
+  gain: number;
+  compact?: boolean;
+  large?: boolean;
+  dark?: boolean;
+}) {
+  const safeBaseline = Math.max(0, Math.min(100, baseline));
+  const safeCurrent = Math.max(safeBaseline, Math.min(100, current));
+  const safeGain = Math.max(0, Math.min(safeCurrent - safeBaseline, gain));
+  const acquiredWidth = Math.max(0, safeCurrent - safeGain);
+  return (
+    <div
+      className={`${compact ? "mt-0" : "mt-4"} ${large ? "h-5" : compact ? "h-2.5" : "h-3"} flex w-full overflow-hidden rounded-full ${dark ? "bg-slate-700" : "bg-slate-200"}`}
+      role="img"
+      aria-label={`Avancement ${safeCurrent}%, dont gain de période ${safeGain}%`}
+    >
+      <span className="h-full bg-blue-500" style={{ width: `${acquiredWidth}%` }} />
+      <span className="h-full bg-emerald-400" style={{ width: `${safeGain}%` }} />
     </div>
   );
 }

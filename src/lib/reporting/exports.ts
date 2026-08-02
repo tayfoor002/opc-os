@@ -5,12 +5,11 @@ export type ExportTask = {
   alstom: string;
   avanzit: string;
   status: string;
+  baselineProgress: number;
   currentProgress: number;
   periodIncrease: number;
   activityContribution: number;
   periodContribution: number;
-  quantitySummary: string;
-  periodOutput: string;
   workSummary: string;
   prerequisiteStatus: string;
   prerequisiteDetails: string;
@@ -23,7 +22,9 @@ export type ExportActivity = {
   location: string;
   alstom: string;
   avanzit: string;
+  baselineProgress: number;
   progress: number;
+  periodIncrease: number;
   tasks: ExportTask[];
 };
 
@@ -48,6 +49,10 @@ export type ReportExportData = {
     averageProgress: number;
     periodIncrease: number;
     updates: number;
+    globalProgress: number;
+    globalBaseline: number;
+    globalGain: number;
+    globalSource: string;
   };
   activities: ExportActivity[];
   completedWork: string[];
@@ -371,6 +376,9 @@ export async function downloadReportWord(
 
   const red = "ED1B2F";
   const navy = "0F2747";
+  const blue = "2563EB";
+  const green = "10B981";
+  const track = "E2E8F0";
   const paleBlue = "EAF2FA";
   const border = { style: BorderStyle.SINGLE, size: 1, color: "D8E1EA" };
   const allBorders = {
@@ -380,6 +388,14 @@ export async function downloadReportWord(
     right: border,
     insideHorizontal: border,
     insideVertical: border,
+  };
+  const noBorders = {
+    top: { style: BorderStyle.NONE },
+    bottom: { style: BorderStyle.NONE },
+    left: { style: BorderStyle.NONE },
+    right: { style: BorderStyle.NONE },
+    insideHorizontal: { style: BorderStyle.NONE },
+    insideVertical: { style: BorderStyle.NONE },
   };
   const brandCell = (text: string) =>
     new TableCell({
@@ -437,6 +453,44 @@ export async function downloadReportWord(
           children: [new TextRun({ text: value, size: 19 })],
         }),
     );
+  const progressBarTable = (
+    baseline: number,
+    current: number,
+    gain: number,
+  ) => {
+    const safeCurrent = Math.max(0, Math.min(100, current));
+    const safeBaseline = Math.max(0, Math.min(safeCurrent, baseline));
+    const safeGain = Math.max(0, Math.min(safeCurrent - safeBaseline, gain));
+    const acquired = Math.max(0, safeCurrent - safeGain);
+    const remaining = Math.max(0, 100 - safeCurrent);
+    const segments = [
+      { value: acquired, color: blue },
+      { value: safeGain, color: green },
+      { value: remaining, color: track },
+    ].filter((segment) => segment.value > 0);
+
+    return new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: noBorders,
+      rows: [
+        new TableRow({
+          height: { value: 120, rule: "exact" },
+          children: segments.map(
+            (segment) =>
+              new TableCell({
+                width: {
+                  size: Math.max(1, segment.value),
+                  type: WidthType.PERCENTAGE,
+                },
+                children: [new Paragraph({ children: [] })],
+                shading: { fill: segment.color, type: ShadingType.CLEAR },
+                margins: { top: 0, bottom: 0, left: 0, right: 0 },
+              }),
+          ),
+        }),
+      ],
+    });
+  };
 
   const children: Array<
     InstanceType<typeof Paragraph> | InstanceType<typeof Table>
@@ -550,6 +604,75 @@ export async function downloadReportWord(
     sectionTitle("1. SYNTHÈSE EXÉCUTIVE"),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: noBorders,
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({
+              children: [
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: "AVANCEMENT GLOBAL",
+                      bold: true,
+                      color: "FFFFFF",
+                      size: 18,
+                    }),
+                  ],
+                }),
+                new Paragraph({
+                  spacing: { before: 80, after: 80 },
+                  children: [
+                    new TextRun({
+                      text: `${data.metrics.globalProgress}%`,
+                      bold: true,
+                      color: "FFFFFF",
+                      size: 42,
+                    }),
+                    new TextRun({
+                      text: `   +${data.metrics.globalGain}% sur la période`,
+                      bold: true,
+                      color: green,
+                      size: 22,
+                    }),
+                  ],
+                }),
+                progressBarTable(
+                  data.metrics.globalBaseline,
+                  data.metrics.globalProgress,
+                  data.metrics.globalGain,
+                ),
+                new Paragraph({
+                  spacing: { before: 80 },
+                  children: [
+                    new TextRun({
+                      text: `Acquis ${data.metrics.globalBaseline}%   •   Gain +${data.metrics.globalGain}%   •   Reste ${Math.max(0, Math.round((100 - data.metrics.globalProgress) * 10) / 10)}%`,
+                      color: "CBD5E1",
+                      size: 16,
+                    }),
+                  ],
+                }),
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: data.metrics.globalSource,
+                      color: "94A3B8",
+                      italics: true,
+                      size: 15,
+                    }),
+                  ],
+                }),
+              ],
+              shading: { fill: navy, type: ShadingType.CLEAR },
+              margins: { top: 180, bottom: 180, left: 220, right: 220 },
+            }),
+          ],
+        }),
+      ],
+    }),
+    new Paragraph({ spacing: { after: 100 } }),
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
       borders: allBorders,
       rows: [
         new TableRow({
@@ -557,8 +680,6 @@ export async function downloadReportWord(
             headerCell("Terminées"),
             headerCell("En cours"),
             headerCell("Bloquées"),
-            headerCell("Avancement moyen"),
-            headerCell("Gain période"),
             headerCell("Mises à jour"),
           ],
         }),
@@ -567,14 +688,12 @@ export async function downloadReportWord(
             textCell(String(data.metrics.completed), true),
             textCell(String(data.metrics.inProgress), true),
             textCell(String(data.metrics.blocked), true),
-            textCell(`${data.metrics.averageProgress}%`, true),
-            textCell(`+${data.metrics.periodIncrease} pts`, true),
             textCell(String(data.metrics.updates), true),
           ],
         }),
       ],
     }),
-    sectionTitle("2. DÉTAIL DES ACTIVITÉS ET TÂCHES"),
+    sectionTitle("2. AVANCEMENT PAR ACTIVITÉ"),
   ];
 
   let currentWordZone = "";
@@ -602,18 +721,35 @@ export async function downloadReportWord(
         shading: { fill: paleBlue, type: ShadingType.CLEAR },
         children: [
           new TextRun({
-            text: `${activity.code} - ${activity.name} (${activity.progress}%)`,
+            text: `${activity.code} - ${activity.name}`,
             bold: true,
             color: navy,
             size: 22,
           }),
+          new TextRun({
+            text: `   ${activity.progress}%`,
+            bold: true,
+            color: blue,
+            size: 24,
+          }),
+          new TextRun({
+            text: `   +${activity.periodIncrease}%`,
+            bold: true,
+            color: green,
+            size: 19,
+          }),
         ],
       }),
+      progressBarTable(
+        activity.baselineProgress,
+        activity.progress,
+        activity.periodIncrease,
+      ),
       new Paragraph({
-        spacing: { after: 90 },
+        spacing: { before: 50, after: 90 },
         children: [
           new TextRun({
-            text: `${activity.zone} | ${activity.location} | Alstom: ${activity.alstom} | Avanzit: ${activity.avanzit}`,
+            text: `${activity.location} • ${activity.tasks.length} tâche(s)`,
             color: "475569",
             size: 17,
           }),
@@ -623,35 +759,59 @@ export async function downloadReportWord(
         width: { size: 100, type: WidthType.PERCENTAGE },
         borders: allBorders,
         rows: [
-          new TableRow({
-            tableHeader: true,
-            children: [
-              headerCell("Tâche"),
-              headerCell("Responsables"),
-              headerCell("État"),
-              headerCell("Progression"),
-              headerCell("Quantité / rendement"),
-              headerCell("Contribution activité"),
-              headerCell("Travaux période"),
-            ],
-          }),
           ...activity.tasks.map(
             (task) =>
               new TableRow({
                 children: [
-                  textCell(task.title, true),
-                  textCell(`A: ${task.alstom}\nV: ${task.avanzit}`),
-                  textCell(
-                    `${task.status}\nPrérequis : ${task.prerequisiteStatus}\n${task.prerequisiteDetails}`,
-                  ),
-                  textCell(
-                    `${task.currentProgress}% | +${task.periodIncrease} pts`,
-                  ),
-                  textCell(`${task.quantitySummary}\n${task.periodOutput}`),
-                  textCell(
-                    `${task.activityContribution.toFixed(1)} pts | +${task.periodContribution.toFixed(1)} pts`,
-                  ),
-                  textCell(task.workSummary),
+                  new TableCell({
+                    width: { size: 42, type: WidthType.PERCENTAGE },
+                    children: [
+                      new Paragraph({
+                        children: [
+                          new TextRun({ text: task.title, bold: true, size: 17 }),
+                        ],
+                      }),
+                      new Paragraph({
+                        children: [
+                          new TextRun({
+                            text: `${task.status} • ${task.prerequisiteStatus}`,
+                            color: "64748B",
+                            size: 15,
+                          }),
+                        ],
+                      }),
+                    ],
+                    margins: { top: 85, bottom: 85, left: 100, right: 100 },
+                  }),
+                  new TableCell({
+                    width: { size: 58, type: WidthType.PERCENTAGE },
+                    children: [
+                      new Paragraph({
+                        alignment: AlignmentType.RIGHT,
+                        spacing: { after: 45 },
+                        children: [
+                          new TextRun({
+                            text: `${task.currentProgress}%`,
+                            bold: true,
+                            color: blue,
+                            size: 18,
+                          }),
+                          new TextRun({
+                            text: `   +${task.periodIncrease}%`,
+                            bold: true,
+                            color: green,
+                            size: 17,
+                          }),
+                        ],
+                      }),
+                      progressBarTable(
+                        task.baselineProgress,
+                        task.currentProgress,
+                        task.periodIncrease,
+                      ),
+                    ],
+                    margins: { top: 85, bottom: 85, left: 100, right: 100 },
+                  }),
                 ],
               }),
           ),
