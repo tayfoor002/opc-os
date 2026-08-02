@@ -47,10 +47,12 @@ export type ReportExportData = {
   periodTitle: string;
   periodRange: string;
   scopeTitle: string;
+  locationTitle: string;
   metrics: {
     completed: number;
     inProgress: number;
     blocked: number;
+    notStarted: number;
     averageProgress: number;
     periodIncrease: number;
     updates: number;
@@ -58,6 +60,7 @@ export type ReportExportData = {
     globalBaseline: number;
     globalGain: number;
     globalSource: string;
+    globalGainStatus: string;
   };
   activities: ExportActivity[];
   completedWork: string[];
@@ -577,6 +580,18 @@ export async function downloadReportWord(
     }),
     new Paragraph({
       alignment: AlignmentType.CENTER,
+      spacing: { after: 90 },
+      children: [
+        new TextRun({
+          text: data.locationTitle.toUpperCase(),
+          bold: true,
+          color: red,
+          size: 32,
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
       spacing: { after: 60 },
       children: [
         new TextRun({
@@ -635,7 +650,9 @@ export async function downloadReportWord(
                       size: 42,
                     }),
                     new TextRun({
-                      text: `   +${data.metrics.globalGain}% sur la période`,
+                      text: data.metrics.globalGainStatus.startsWith("État initial")
+                        ? "   ÉTAT INITIAL"
+                        : `   +${data.metrics.globalGain}% sur la période`,
                       bold: true,
                       color: green,
                       size: 22,
@@ -663,6 +680,15 @@ export async function downloadReportWord(
                       text: data.metrics.globalSource,
                       color: "94A3B8",
                       italics: true,
+                      size: 15,
+                    }),
+                  ],
+                }),
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: data.metrics.globalGainStatus,
+                      color: "A7F3D0",
                       size: 15,
                     }),
                   ],
@@ -753,6 +779,7 @@ export async function downloadReportWord(
           children: [
             headerCell("Terminées"),
             headerCell("En cours"),
+            headerCell("Non démarrées"),
             headerCell("Bloquées"),
             headerCell("Mises à jour"),
           ],
@@ -761,6 +788,7 @@ export async function downloadReportWord(
           children: [
             textCell(String(data.metrics.completed), true),
             textCell(String(data.metrics.inProgress), true),
+            textCell(String(data.metrics.notStarted), true),
             textCell(String(data.metrics.blocked), true),
             textCell(String(data.metrics.updates), true),
           ],

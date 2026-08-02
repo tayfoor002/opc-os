@@ -172,6 +172,7 @@ export function ReportingWorkspace() {
   const [periodStart, setPeriodStart] = useState(today);
   const [periodEnd, setPeriodEnd] = useState(today);
   const [selectedZoneIds, setSelectedZoneIds] = useState<string[]>([]);
+  const [selectedElementIds, setSelectedElementIds] = useState<string[]>([]);
   const [activityFilter, setActivityFilter] = useState("all");
   const [showOncfLogo, setShowOncfLogo] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -324,6 +325,11 @@ export function ReportingWorkspace() {
       (activity) =>
         (!selectedZoneIds.length ||
           Boolean(activity.zone_id && selectedZoneIds.includes(activity.zone_id))) &&
+        (!selectedElementIds.length ||
+          Boolean(
+            activity.zone_element_id &&
+              selectedElementIds.includes(activity.zone_element_id),
+          )) &&
         (activityFilter === "all" || activity.id === activityFilter),
     )
     .sort((left, right) => {
@@ -361,7 +367,12 @@ export function ReportingWorkspace() {
   const completed = relevantTasks.filter((task) => task.status === "done").length;
   const blocked = relevantTasks.filter((task) => task.status === "blocked").length;
   const inProgress = relevantTasks.filter(
-    (task) => task.status === "in_progress",
+    (task) =>
+      task.status === "in_progress" ||
+      (task.status === "todo" && Number(task.progress) > 0),
+  ).length;
+  const notStarted = relevantTasks.filter(
+    (task) => task.status === "todo" && Number(task.progress) <= 0,
   ).length;
   const averageProgress = relevantTasks.length
     ? Math.round(
@@ -378,12 +389,20 @@ export function ReportingWorkspace() {
     const beforePeriod = taskUpdates.filter(
       (update) => update.update_date < period.start,
     );
+    const duringPeriod = taskUpdates.filter(
+      (update) =>
+        update.update_date >= period.start && update.update_date <= period.end,
+    );
     const throughPeriod = taskUpdates.filter(
       (update) => update.update_date <= period.end,
     );
-    const baseline = Number(beforePeriod.at(-1)?.progress ?? 0);
     const progressAtPeriodEnd = Number(
-      throughPeriod.at(-1)?.progress ?? task.progress ?? baseline,
+      throughPeriod.at(-1)?.progress ?? task.progress ?? 0,
+    );
+    const baseline = Number(
+      beforePeriod.at(-1)?.progress ??
+        duringPeriod.at(0)?.progress ??
+        progressAtPeriodEnd,
     );
     const periodIncrease = Math.max(0, progressAtPeriodEnd - baseline);
     const targetQuantity = Number(task.target_quantity ?? 0);
@@ -391,6 +410,7 @@ export function ReportingWorkspace() {
       task.progress_mode === "quantity"
         ? Number(
             beforePeriod.at(-1)?.completed_quantity ??
+              duringPeriod.at(0)?.completed_quantity ??
               (targetQuantity * baseline) / 100,
           )
         : 0;
@@ -416,6 +436,8 @@ export function ReportingWorkspace() {
       activityContribution: Number(task.progress || 0) / parentTaskCount,
       periodContribution: periodIncrease / parentTaskCount,
       parentTaskCount,
+      hasHistoricalBaseline:
+        beforePeriod.length > 0 || duringPeriod.length > 1,
     };
   };
   const averagePeriodIncrease = relevantTasks.length
@@ -429,6 +451,11 @@ export function ReportingWorkspace() {
       ) / 10
     : 0;
   const scopedImports = progressImports.filter((item) => {
+    if (selectedElementIds.length) {
+      return Boolean(
+        item.zone_element_id && selectedElementIds.includes(item.zone_element_id),
+      );
+    }
     if (!selectedZoneIds.length || !item.zone_element_id) return true;
     const element = zoneElements.find(
       (candidate) => candidate.id === item.zone_element_id,
@@ -439,6 +466,10 @@ export function ReportingWorkspace() {
     (item) => item.report_date <= period.end,
   );
   const latestGlobalImport = importsThroughPeriod.at(-1);
+  const importsDuringPeriod = scopedImports.filter(
+    (item) =>
+      item.report_date >= period.start && item.report_date <= period.end,
+  );
   const baselineGlobalImport = scopedImports
     .filter((item) => item.report_date < period.start)
     .at(-1);
@@ -447,11 +478,15 @@ export function ReportingWorkspace() {
   );
   const globalBaseline = Number(
     baselineGlobalImport?.global_progress ??
-      Math.max(0, globalProgress - averagePeriodIncrease),
+      importsDuringPeriod.at(0)?.global_progress ??
+      globalProgress,
   );
   const globalGain = Math.max(
     0,
     Math.round((globalProgress - globalBaseline) * 10) / 10,
+  );
+  const globalGainHasReference = Boolean(
+    baselineGlobalImport || importsDuringPeriod.length > 1,
   );
   const activityProgressAnalysis = (activityId: string) => {
     const activityTasks = relevantTasks.filter(
@@ -487,12 +522,40 @@ export function ReportingWorkspace() {
     const task = tasks.find((item) => item.id === taskId);
     return activities.find((activity) => activity.id === task?.activity_id);
   };
-  const scopeTitle = selectedZoneIds.length
+  const scopeTitle = selectedElementIds.length
+    ? `Secteurs : ${zoneElements
+        .filter((element) => selectedElementIds.includes(element.id))
+        .map((element) => element.name)
+        .join(", ")}`
+    : selectedZoneIds.length
     ? `Zones : ${zones
         .filter((zone) => selectedZoneIds.includes(zone.id))
         .map((zone) => zone.name)
         .join(", ")}`
     : "Périmètre global - toutes les zones";
+  const distinctLocationNames = [
+    ...new Set(
+      reportActivities.map(
+        (activity) =>
+          elementName(activity.zone_element_id) || zoneName(activity.zone_id),
+      ),
+    ),
+  ];
+  const locationTitle =
+    selectedElementIds.length === 1
+      ? elementName(selectedElementIds[0]) || "Secteur sélectionné"
+      : distinctLocationNames.length === 1
+      ? distinctLocationNames[0]
+      : selectedZoneIds.length === 1
+        ? zoneName(selectedZoneIds[0])
+        : "GLOBAL - TOUTES LES ZONES";
+  const taskStatusLabel = (task: ReportTask, progress: number) => {
+    if (progress <= 0 && task.status === "todo") return "Non démarrée";
+    if (task.status === "todo") return "En cours";
+    if (task.status === "in_progress") return "En cours";
+    if (task.status === "blocked") return "Bloquée";
+    return "Terminée";
+  };
 
   function buildExportData(): ReportExportData {
     return {
@@ -501,10 +564,12 @@ export function ReportingWorkspace() {
       periodTitle: periodSubtitle(type, period.start, period.end),
       periodRange: `${period.start} - ${period.end}`,
       scopeTitle,
+      locationTitle,
       metrics: {
         completed,
         inProgress,
         blocked,
+        notStarted,
         averageProgress,
         periodIncrease: averagePeriodIncrease,
         updates: reportUpdates.length,
@@ -514,6 +579,9 @@ export function ReportingWorkspace() {
         globalSource: latestGlobalImport
           ? `${latestGlobalImport.source_file_name} · ${latestGlobalImport.report_date}`
           : "Calcul OPC OS à partir des tâches",
+        globalGainStatus: globalGainHasReference
+          ? "Gain calculé depuis le relevé de référence"
+          : "État initial - le gain commencera au prochain relevé",
       },
       activities: reportActivities.map((activity) => {
         const activityAnalysis = activityProgressAnalysis(activity.id);
@@ -552,7 +620,7 @@ export function ReportingWorkspace() {
               title: task.title,
               alstom: collaboratorName(task.alstom_supervisor_id),
               avanzit: collaboratorName(task.avanzit_site_manager_id),
-              status: task.status,
+              status: taskStatusLabel(task, analysis.current),
               baselineProgress: analysis.baseline,
               currentProgress: analysis.current,
               periodIncrease: analysis.periodIncrease,
@@ -777,6 +845,16 @@ export function ReportingWorkspace() {
         ? current.filter((id) => id !== zoneId)
         : [...current, zoneId],
     );
+    setSelectedElementIds([]);
+    setActivityFilter("all");
+  }
+
+  function toggleElement(elementId: string) {
+    setSelectedElementIds((current) =>
+      current.includes(elementId)
+        ? current.filter((id) => id !== elementId)
+        : [...current, elementId],
+    );
     setActivityFilter("all");
   }
 
@@ -849,8 +927,13 @@ export function ReportingWorkspace() {
             {activities
               .filter(
                 (activity) =>
-                  !selectedZoneIds.length ||
-                  Boolean(activity.zone_id && selectedZoneIds.includes(activity.zone_id)),
+                  (!selectedZoneIds.length ||
+                    Boolean(activity.zone_id && selectedZoneIds.includes(activity.zone_id))) &&
+                  (!selectedElementIds.length ||
+                    Boolean(
+                      activity.zone_element_id &&
+                        selectedElementIds.includes(activity.zone_element_id),
+                    )),
               )
               .map((activity) => <option key={activity.id} value={activity.id}>{activity.code} — {activity.name}</option>)}
           </select>
@@ -864,6 +947,7 @@ export function ReportingWorkspace() {
               type="button"
               onClick={() => {
                 setSelectedZoneIds([]);
+                setSelectedElementIds([]);
                 setActivityFilter("all");
               }}
               className={`rounded-full px-3 py-1 text-xs font-black ${
@@ -900,6 +984,53 @@ export function ReportingWorkspace() {
               ? `${selectedZoneIds.length} zone(s) sélectionnée(s).`
               : "Rapport global couvrant toutes les zones."}
           </p>
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-black uppercase text-slate-500">
+                Secteur / élément de zone
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedElementIds([]);
+                  setActivityFilter("all");
+                }}
+                className={`rounded-full px-3 py-1 text-xs font-black ${
+                  selectedElementIds.length
+                    ? "bg-slate-100 text-slate-600"
+                    : "bg-[var(--opc-blue)] text-white"
+                }`}
+              >
+                Tous les secteurs
+              </button>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {zoneElements
+                .filter(
+                  (element) =>
+                    !selectedZoneIds.length ||
+                    selectedZoneIds.includes(element.zone_id),
+                )
+                .map((element) => {
+                  const selected = selectedElementIds.includes(element.id);
+                  return (
+                    <button
+                      key={element.id}
+                      type="button"
+                      onClick={() => toggleElement(element.id)}
+                      className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${
+                        selected
+                          ? "border-[var(--opc-blue)] bg-blue-50 text-[var(--opc-blue)]"
+                          : "border-[var(--opc-border)] bg-white text-slate-600"
+                      }`}
+                    >
+                      {selected ? "✓ " : ""}
+                      {element.name}
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -935,6 +1066,9 @@ export function ReportingWorkspace() {
 
           <div className="border-b border-[var(--opc-border)] px-8 py-6 text-center">
             <h2 className="text-2xl font-black uppercase text-[var(--opc-ink)]">{reportLabels[type]}</h2>
+            <p className="mt-3 text-3xl font-black uppercase tracking-[0.08em] text-[var(--opc-red)]">
+              {locationTitle}
+            </p>
             <p className="mt-2 font-bold capitalize text-[var(--opc-blue)]">{periodSubtitle(type, period.start, period.end)}</p>
             <p className="mt-1 text-xs text-slate-500">{period.start} → {period.end}</p>
             <p className="mt-2 text-xs font-black uppercase text-[var(--opc-red)]">{scopeTitle}</p>
@@ -960,7 +1094,14 @@ export function ReportingWorkspace() {
                   </div>
                   <div className="rounded-2xl bg-emerald-400/15 px-5 py-3 text-right">
                     <p className="text-[10px] font-black uppercase tracking-wide text-emerald-200">Gain période</p>
-                    <p className="mt-1 text-3xl font-black text-emerald-300">+{globalGain}%</p>
+                    <p className="mt-1 text-3xl font-black text-emerald-300">
+                      {globalGainHasReference ? `+${globalGain}%` : "État initial"}
+                    </p>
+                    <p className="mt-1 max-w-56 text-[9px] font-semibold text-emerald-100">
+                      {globalGainHasReference
+                        ? "Comparé au relevé précédent"
+                        : "Le gain commencera au prochain relevé"}
+                    </p>
                   </div>
                 </div>
                 <SegmentedProgressBar
@@ -995,9 +1136,10 @@ export function ReportingWorkspace() {
                   })}
                 </div>
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
                 <Metric icon={CheckCircle2} label="Terminées" value={completed} tone="green" />
                 <Metric icon={Clock3} label="En cours" value={inProgress} tone="blue" />
+                <Metric icon={Clock3} label="Non démarrées" value={notStarted} />
                 <Metric icon={AlertTriangle} label="Bloquées" value={blocked} tone="red" />
                 <Metric icon={CalendarDays} label="Mises à jour" value={reportUpdates.length} />
               </div>
@@ -1047,8 +1189,8 @@ export function ReportingWorkspace() {
                                     <div className="min-w-0">
                                     <p className="truncate text-xs font-black">{task.title}</p>
                                     <p className="mt-1 flex items-center gap-2 text-[9px] font-bold uppercase text-slate-400">
-                                      <span className={`h-2 w-2 rounded-full ${task.status === "done" ? "bg-emerald-500" : task.status === "blocked" ? "bg-red-500" : "bg-blue-500"}`} />
-                                      {task.status}
+                                      <span className={`h-2 w-2 rounded-full ${task.status === "done" ? "bg-emerald-500" : task.status === "blocked" ? "bg-red-500" : task.status === "todo" && analysis.current <= 0 ? "bg-slate-400" : "bg-blue-500"}`} />
+                                      {taskStatusLabel(task, analysis.current)}
                                       <span className={prerequisite?.total_requirements && prerequisiteMissing === 0 ? "text-emerald-600" : "text-amber-600"}>
                                         · {prerequisite?.total_requirements && prerequisiteMissing === 0 ? "Prérequis OK" : "Prérequis à vérifier"}
                                       </span>

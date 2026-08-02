@@ -300,22 +300,27 @@ export async function downloadReportPdf(
   pdf.text(data.reportTitle.toUpperCase(), pageWidth / 2, y + 5, {
     align: "center",
   });
+  pdf.setTextColor(...red);
+  pdf.setFontSize(17);
+  pdf.text(data.locationTitle.toUpperCase(), pageWidth / 2, y + 13, {
+    align: "center",
+  });
   pdf.setTextColor(...blue);
   pdf.setFontSize(11);
-  pdf.text(data.periodTitle, pageWidth / 2, y + 12, { align: "center" });
+  pdf.text(data.periodTitle, pageWidth / 2, y + 20, { align: "center" });
   pdf.setTextColor(...slate);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
-  pdf.text(data.periodRange, pageWidth / 2, y + 18, { align: "center" });
+  pdf.text(data.periodRange, pageWidth / 2, y + 26, { align: "center" });
   pdf.setFont("helvetica", "bold");
   pdf.setTextColor(...red);
-  pdf.text(data.scopeTitle, pageWidth / 2, y + 23, { align: "center" });
-  y += 30;
+  pdf.text(data.scopeTitle, pageWidth / 2, y + 31, { align: "center" });
+  y += 38;
 
   section(1, "SYNTHÈSE EXÉCUTIVE");
   ensure(42);
   pdf.setFillColor(...navy);
-  pdf.roundedRect(margin, y, contentWidth, 30, 3, 3, "F");
+  pdf.roundedRect(margin, y, contentWidth, 34, 3, 3, "F");
   pdf.setFont("helvetica", "bold");
   pdf.setTextColor(255, 255, 255);
   pdf.setFontSize(9);
@@ -324,7 +329,13 @@ export async function downloadReportPdf(
   pdf.text(`${data.metrics.globalProgress}%`, margin + 5, y + 18);
   pdf.setTextColor(...green);
   pdf.setFontSize(13);
-  pdf.text(`+${data.metrics.globalGain}%`, margin + 36, y + 18);
+  pdf.text(
+    data.metrics.globalGainStatus.startsWith("État initial")
+      ? "ÉTAT INITIAL"
+      : `+${data.metrics.globalGain}%`,
+    margin + 36,
+    y + 18,
+  );
   progressBar(
     margin + 55,
     y + 10,
@@ -338,12 +349,13 @@ export async function downloadReportPdf(
   pdf.setTextColor(203, 213, 225);
   pdf.setFontSize(7);
   pdf.text(data.metrics.globalSource, margin + 55, y + 23);
+  pdf.text(data.metrics.globalGainStatus, margin + 55, y + 27);
   pdf.text(
     `Acquis ${data.metrics.globalBaseline}%  |  Gain +${data.metrics.globalGain}%  |  Reste ${Math.max(0, Math.round((100 - data.metrics.globalProgress) * 10) / 10)}%`,
     margin + 55,
-    y + 27,
+    y + 31.5,
   );
-  y += 35;
+  y += 39;
 
   if (data.activities.length) {
     pdf.setFont("helvetica", "bold");
@@ -394,6 +406,7 @@ export async function downloadReportPdf(
   const metrics: Array<[string, string | number]> = [
     ["Terminées", data.metrics.completed],
     ["En cours", data.metrics.inProgress],
+    ["Non démarrées", data.metrics.notStarted],
     ["Bloquées", data.metrics.blocked],
     ["Mises à jour", data.metrics.updates],
   ];
