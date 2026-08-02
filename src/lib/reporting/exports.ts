@@ -9,6 +9,8 @@ export type ExportTask = {
   periodIncrease: number;
   activityContribution: number;
   periodContribution: number;
+  quantitySummary: string;
+  periodOutput: string;
   workSummary: string;
   prerequisiteStatus: string;
   prerequisiteDetails: string;
@@ -628,6 +630,7 @@ export async function downloadReportWord(
               headerCell("Responsables"),
               headerCell("État"),
               headerCell("Progression"),
+              headerCell("Quantité / rendement"),
               headerCell("Contribution activité"),
               headerCell("Travaux période"),
             ],
@@ -644,6 +647,7 @@ export async function downloadReportWord(
                   textCell(
                     `${task.currentProgress}% | +${task.periodIncrease} pts`,
                   ),
+                  textCell(`${task.quantitySummary}\n${task.periodOutput}`),
                   textCell(
                     `${task.activityContribution.toFixed(1)} pts | +${task.periodContribution.toFixed(1)} pts`,
                   ),

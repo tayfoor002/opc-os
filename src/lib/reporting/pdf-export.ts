@@ -327,6 +327,8 @@ export async function downloadReportPdf(
         [
           `Actuel: ${task.currentProgress}%`,
           `Gain: +${task.periodIncrease} pts`,
+          `Quantité: ${task.quantitySummary}`,
+          `Rendement: ${task.periodOutput}`,
           `Contribution: ${task.activityContribution.toFixed(1)} pts`,
           `Gain activité: +${task.periodContribution.toFixed(1)} pts`,
         ],

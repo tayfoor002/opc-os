@@ -36,6 +36,10 @@ type ReportTask = {
   title: string;
   status: "todo" | "in_progress" | "blocked" | "done";
   progress: number;
+  progress_mode: "manual" | "quantity" | "building";
+  target_quantity: number | null;
+  completed_quantity: number;
+  progress_unit: string;
   start_date: string | null;
   due_date: string | null;
   alstom_supervisor_id: string | null;
@@ -51,6 +55,7 @@ type ProgressUpdate = {
   task_id: string;
   update_date: string;
   progress: number;
+  completed_quantity: number | null;
   work_done: string | null;
   ongoing_work: string | null;
   blockers: string | null;
@@ -178,12 +183,12 @@ export function ReportingWorkspace() {
         supabase.from("activities").select("*").eq("project_id", project.data.id).order("code"),
         supabase
           .from("tasks")
-          .select("id,activity_id,title,status,progress,start_date,due_date,alstom_supervisor_id,avanzit_site_manager_id")
+          .select("id,activity_id,title,status,progress,progress_mode,target_quantity,completed_quantity,progress_unit,start_date,due_date,alstom_supervisor_id,avanzit_site_manager_id")
           .eq("project_id", project.data.id)
           .order("due_date"),
         supabase
           .from("task_progress_updates")
-          .select("id,task_id,update_date,progress,work_done,ongoing_work,blockers,next_steps,comment,photos:task_progress_photos(id,file_path,caption)")
+          .select("id,task_id,update_date,progress,completed_quantity,work_done,ongoing_work,blockers,next_steps,comment,photos:task_progress_photos(id,file_path,caption)")
           .eq("project_id", project.data.id)
           .order("update_date", { ascending: false }),
         supabase
@@ -338,6 +343,22 @@ export function ReportingWorkspace() {
       throughPeriod.at(-1)?.progress ?? baseline,
     );
     const periodIncrease = Math.max(0, progressAtPeriodEnd - baseline);
+    const targetQuantity = Number(task.target_quantity ?? 0);
+    const baselineQuantity =
+      task.progress_mode === "quantity"
+        ? Number(
+            beforePeriod.at(-1)?.completed_quantity ??
+              (targetQuantity * baseline) / 100,
+          )
+        : 0;
+    const quantityAtPeriodEnd =
+      task.progress_mode === "quantity"
+        ? Number(
+            throughPeriod.at(-1)?.completed_quantity ??
+              (targetQuantity * progressAtPeriodEnd) / 100,
+          )
+        : 0;
+    const periodOutput = Math.max(0, quantityAtPeriodEnd - baselineQuantity);
     const parentTaskCount = Math.max(
       1,
       tasks.filter((item) => item.activity_id === task.activity_id).length,
@@ -347,6 +368,8 @@ export function ReportingWorkspace() {
       baseline,
       progressAtPeriodEnd,
       periodIncrease,
+      quantityAtPeriodEnd,
+      periodOutput,
       activityContribution: Number(task.progress || 0) / parentTaskCount,
       periodContribution: periodIncrease / parentTaskCount,
       parentTaskCount,
@@ -432,6 +455,14 @@ export function ReportingWorkspace() {
               periodIncrease: analysis.periodIncrease,
               activityContribution: analysis.activityContribution,
               periodContribution: analysis.periodContribution,
+              quantitySummary:
+                task.progress_mode === "quantity"
+                  ? `${Number(task.completed_quantity ?? 0)} / ${Number(task.target_quantity ?? 0)} ${task.progress_unit || "u"}`
+                  : "Suivi en pourcentage",
+              periodOutput:
+                task.progress_mode === "quantity"
+                  ? `+${Math.round(analysis.periodOutput * 100) / 100} ${task.progress_unit || "u"}`
+                  : `+${analysis.periodIncrease} pts`,
               workSummary:
                 taskUpdates
                   .map(
@@ -873,6 +904,7 @@ export function ReportingWorkspace() {
                               <th className="p-3">Prérequis</th>
                               <th className="p-3">État actuel</th>
                               <th className="p-3">Gain période</th>
+                              <th className="p-3">Quantité / rendement</th>
                               <th className="p-3">Part de l’activité</th>
                               <th className="p-3">Travaux de la période</th>
                             </tr>
@@ -928,6 +960,20 @@ export function ReportingWorkspace() {
                                     <p className="mt-2 text-[10px] text-slate-400">
                                       {analysis.baseline}% → {analysis.progressAtPeriodEnd}%
                                     </p>
+                                  </td>
+                                  <td className="p-3">
+                                    {task.progress_mode === "quantity" ? (
+                                      <>
+                                        <p className="font-black text-[var(--opc-blue)]">
+                                          {Number(task.completed_quantity ?? 0)} / {Number(task.target_quantity ?? 0)} {task.progress_unit || "u"}
+                                        </p>
+                                        <p className="mt-1 text-[10px] font-black text-emerald-700">
+                                          Rendement période : +{Math.round(analysis.periodOutput * 100) / 100} {task.progress_unit || "u"}
+                                        </p>
+                                      </>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400">Suivi en pourcentage</span>
+                                    )}
                                   </td>
                                   <td className="p-3">
                                     <p className="font-black">{analysis.activityContribution.toFixed(1)} pts</p>

@@ -103,6 +103,10 @@ export async function createTaskProgressUpdate(
       task_id: parsed.data.task_id,
       update_date: parsed.data.update_date,
       progress: resolvedProgress,
+      completed_quantity:
+        taskResult.data.progress_mode === "quantity"
+          ? parsed.data.completed_quantity
+          : null,
       work_done: parsed.data.work_done || null,
       ongoing_work: parsed.data.ongoing_work || null,
       blockers: parsed.data.blockers || null,
@@ -270,6 +274,10 @@ export async function updateTaskProgressUpdate(
     .update({
       update_date: parsed.data.update_date,
       progress: resolvedProgress,
+      completed_quantity:
+        taskResult.data.progress_mode === "quantity"
+          ? parsed.data.completed_quantity
+          : null,
       work_done: parsed.data.work_done || null,
       ongoing_work: parsed.data.ongoing_work || null,
       blockers: parsed.data.blockers || null,
