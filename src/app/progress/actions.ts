@@ -416,10 +416,7 @@ export async function applyCasaportProgressImport(
           ? Number(savedTask.completed_quantity)
           : null,
         work_done: `Relevé d’avancement Casa-Port : ${quantitySummary}.`,
-        ongoing_work:
-          Number(savedTask.progress) > 0 && Number(savedTask.progress) < 100
-            ? "Travaux en cours selon le rapport global Casa-Port."
-            : null,
+        ongoing_work: null,
         comment: `Import automatique depuis ${data.fileName}`,
         source: "casaport_pdf",
         source_file_name: data.fileName,

@@ -100,6 +100,13 @@ type ProgressImport = {
   source_file_name: string;
   zone_element_id: string | null;
 };
+type BuildingPhase = {
+  task_id: string;
+  code: string;
+  label: string;
+  progress: number;
+  sort_order: number;
+};
 
 const reportLabels: Record<ReportType, string> = {
   daily: "Rapport journalier",
@@ -159,6 +166,7 @@ export function ReportingWorkspace() {
   const [taskPrerequisites, setTaskPrerequisites] =
     useState<TaskPrerequisiteStatus[]>([]);
   const [progressImports, setProgressImports] = useState<ProgressImport[]>([]);
+  const [buildingPhases, setBuildingPhases] = useState<BuildingPhase[]>([]);
   const [type, setType] = useState<ReportType>("daily");
   const today = isoDate(new Date());
   const [periodStart, setPeriodStart] = useState(today);
@@ -245,7 +253,7 @@ export function ReportingWorkspace() {
       setProgressImports((progressImportsResult.data ?? []) as ProgressImport[]);
       const taskIds = (taskResult.data ?? []).map((task) => task.id);
       if (taskIds.length) {
-        const [resourcesResult, equipmentLinkResult, prerequisiteResult] =
+        const [resourcesResult, equipmentLinkResult, prerequisiteResult, buildingPhasesResult] =
           await Promise.all([
             supabase
               .from("task_tools")
@@ -265,6 +273,11 @@ export function ReportingWorkspace() {
                 "task_id,total_requirements,missing_certifications,missing_documents,invalid_tools,invalid_equipment,missing_manual_items",
               )
               .in("task_id", taskIds),
+            supabase
+              .from("task_building_phases")
+              .select("task_id,code,label,progress,sort_order")
+              .in("task_id", taskIds)
+              .order("sort_order"),
           ]);
         if (!resourcesResult.error) {
           setTaskResources((resourcesResult.data ?? []) as TaskResource[]);
@@ -277,6 +290,11 @@ export function ReportingWorkspace() {
         if (!prerequisiteResult.error) {
           setTaskPrerequisites(
             (prerequisiteResult.data ?? []) as TaskPrerequisiteStatus[],
+          );
+        }
+        if (!buildingPhasesResult.error) {
+          setBuildingPhases(
+            (buildingPhasesResult.data ?? []) as BuildingPhase[],
           );
         }
       }
@@ -325,6 +343,17 @@ export function ReportingWorkspace() {
   const reportUpdates = filteredUpdates.filter((update) =>
     relevantTaskIds.has(update.task_id),
   );
+  const isAutomaticCasaPortPlaceholder = (value: string | null) =>
+    value?.trim() === "Travaux en cours selon le rapport global Casa-Port.";
+  const completedWorkValues = reportUpdates
+    .map((update) => update.work_done)
+    .filter(Boolean) as string[];
+  const ongoingWorkValues = reportUpdates
+    .map((update) => update.ongoing_work)
+    .filter(
+      (value): value is string =>
+        Boolean(value) && !isAutomaticCasaPortPlaceholder(value),
+    );
   const reportActivities = selectedActivities;
   const photos = reportUpdates.flatMap((update) =>
     (update.photos ?? []).map((photo) => ({ ...photo, update })),
@@ -527,6 +556,19 @@ export function ReportingWorkspace() {
               baselineProgress: analysis.baseline,
               currentProgress: analysis.current,
               periodIncrease: analysis.periodIncrease,
+              measurement:
+                task.progress_mode === "quantity"
+                  ? `Réalisé ${Math.round(analysis.quantityAtPeriodEnd * 100) / 100} ${task.progress_unit || "u"} • Objectif ${Number(task.target_quantity ?? 0)} ${task.progress_unit || "u"}`
+                  : task.progress_mode === "building"
+                    ? `${buildingPhases.filter((phase) => phase.task_id === task.id).length} étapes de construction`
+                    : "Échelle de mesure : 0 à 100 %",
+              buildingSteps: buildingPhases
+                .filter((phase) => phase.task_id === task.id)
+                .sort((left, right) => left.sort_order - right.sort_order)
+                .map((phase) => ({
+                  label: phase.label,
+                  progress: Number(phase.progress ?? 0),
+                })),
               activityContribution: analysis.activityContribution,
               periodContribution: analysis.periodContribution,
               workSummary:
@@ -570,12 +612,8 @@ export function ReportingWorkspace() {
           }),
         };
       }),
-      completedWork: reportUpdates
-        .map((update) => update.work_done)
-        .filter(Boolean) as string[],
-      ongoingWork: reportUpdates
-        .map((update) => update.ongoing_work)
-        .filter(Boolean) as string[],
+      completedWork: completedWorkValues,
+      ongoingWork: ongoingWorkValues,
       blockers: reportUpdates
         .map((update) => update.blockers)
         .filter(Boolean) as string[],
@@ -937,6 +975,25 @@ export function ReportingWorkspace() {
                   <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-400" /> Gain +{globalGain}%</span>
                   <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-slate-600" /> Reste {Math.max(0, Math.round((100 - globalProgress) * 10) / 10)}%</span>
                 </div>
+                <div className="mt-5 grid gap-3 border-t border-white/10 pt-5 md:grid-cols-2">
+                  {reportActivities.map((activity) => {
+                    const analysis = activityProgressAnalysis(activity.id);
+                    return (
+                      <div key={activity.id} className="rounded-xl bg-white/5 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="min-w-0 truncate text-[10px] font-black uppercase tracking-wide text-slate-200">
+                            {activity.code} · {activity.name}
+                          </p>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <strong className="text-sm text-white">{analysis.current}%</strong>
+                            <span className="text-[10px] font-black text-emerald-300">+{analysis.gain}%</span>
+                          </div>
+                        </div>
+                        <SegmentedProgressBar baseline={analysis.baseline} current={analysis.current} gain={analysis.gain} dark compact />
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
                 <Metric icon={CheckCircle2} label="Terminées" value={completed} tone="green" />
@@ -985,22 +1042,45 @@ export function ReportingWorkspace() {
                                   Number(prerequisite.missing_manual_items)
                                 : 0;
                               return (
-                                <div key={task.id} className="grid items-center gap-3 py-3 md:grid-cols-[minmax(180px,0.85fr)_minmax(260px,1.5fr)_90px]">
-                                  <div className="min-w-0">
+                                <div key={task.id} className="py-3">
+                                  <div className="grid items-center gap-3 md:grid-cols-[minmax(180px,0.85fr)_minmax(260px,1.5fr)_90px]">
+                                    <div className="min-w-0">
                                     <p className="truncate text-xs font-black">{task.title}</p>
                                     <p className="mt-1 flex items-center gap-2 text-[9px] font-bold uppercase text-slate-400">
                                       <span className={`h-2 w-2 rounded-full ${task.status === "done" ? "bg-emerald-500" : task.status === "blocked" ? "bg-red-500" : "bg-blue-500"}`} />
                                       {task.status}
-                                      <span className={prerequisite?.total_requirements && prerequisiteMissing === 0 ? "text-emerald-600" : "text-red-500"}>
-                                        · {prerequisite?.total_requirements && prerequisiteMissing === 0 ? "Prérequis OK" : `${prerequisiteMissing || "?"} anomalie(s)`}
+                                      <span className={prerequisite?.total_requirements && prerequisiteMissing === 0 ? "text-emerald-600" : "text-amber-600"}>
+                                        · {prerequisite?.total_requirements && prerequisiteMissing === 0 ? "Prérequis OK" : "Prérequis à vérifier"}
                                       </span>
                                     </p>
+                                    <p className="mt-1 text-[10px] font-semibold text-slate-500">
+                                      {task.progress_mode === "quantity"
+                                        ? `Réalisé ${Math.round(analysis.quantityAtPeriodEnd * 100) / 100} ${task.progress_unit || "u"} / ${Number(task.target_quantity ?? 0)} ${task.progress_unit || "u"}`
+                                        : task.progress_mode === "building"
+                                          ? `${buildingPhases.filter((phase) => phase.task_id === task.id).length} étapes de construction`
+                                          : "Mesure en pourcentage"}
+                                    </p>
+                                    </div>
+                                    <SegmentedProgressBar baseline={analysis.baseline} current={analysis.current} gain={analysis.periodIncrease} compact />
+                                    <div className="text-right">
+                                      <p className="text-base font-black text-[var(--opc-blue)]">{analysis.current}%</p>
+                                      <p className="text-[10px] font-black text-emerald-600">+{analysis.periodIncrease}%</p>
+                                    </div>
                                   </div>
-                                  <SegmentedProgressBar baseline={analysis.baseline} current={analysis.current} gain={analysis.periodIncrease} compact />
-                                  <div className="text-right">
-                                    <p className="text-base font-black text-[var(--opc-blue)]">{analysis.current}%</p>
-                                    <p className="text-[10px] font-black text-emerald-600">+{analysis.periodIncrease}%</p>
-                                  </div>
+                                  {task.progress_mode === "building" ? (
+                                    <div className="mt-3 grid gap-x-5 gap-y-2 rounded-xl bg-slate-50 p-3 md:grid-cols-2">
+                                      {buildingPhases
+                                        .filter((phase) => phase.task_id === task.id)
+                                        .sort((left, right) => left.sort_order - right.sort_order)
+                                        .map((phase) => (
+                                          <div key={phase.code} className="grid grid-cols-[minmax(120px,1fr)_minmax(100px,1.2fr)_38px] items-center gap-2">
+                                            <span className="truncate text-[9px] font-bold text-slate-600">{phase.label}</span>
+                                            <SegmentedProgressBar baseline={Number(phase.progress)} current={Number(phase.progress)} gain={0} compact />
+                                            <span className="text-right text-[9px] font-black text-[var(--opc-blue)]">{Number(phase.progress)}%</span>
+                                          </div>
+                                        ))}
+                                    </div>
+                                  ) : null}
                                 </div>
                               );
                             })}
@@ -1040,17 +1120,11 @@ export function ReportingWorkspace() {
               <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">
                 4. Production, contraintes et prévisions
               </h3>
-              <div className="mt-4 grid gap-5 md:grid-cols-2">
-                <ReportList title="4.1 Travaux réalisés" values={reportUpdates.map((update) => update.work_done).filter(Boolean) as string[]} />
-                <ReportList title="4.2 Travaux en cours" values={reportUpdates.map((update) => update.ongoing_work).filter(Boolean) as string[]} />
-                <ReportList title="4.3 Blocages / risques / alertes" values={reportUpdates.map((update) => update.blockers).filter(Boolean) as string[]} red />
-                <ReportList title="4.4 Prochaines étapes" values={reportUpdates.map((update) => update.next_steps).filter(Boolean) as string[]} />
-              </div>
-            </section>
-
-            <section className="mt-8 break-before-page">
-                <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">5. Planches photographiques</h3>
-                <div className="mt-4 space-y-6">
+              <div className="mt-4">
+                <ReportList title="4.1 Travaux réalisés" values={completedWorkValues} />
+                <div className="mt-5 break-before-page rounded-2xl border border-[var(--opc-border)] bg-slate-50 p-5">
+                  <h4 className="text-sm font-black uppercase text-[var(--opc-ink)]">Photos des travaux réalisés</h4>
+                  <div className="mt-4 space-y-6">
                   {reportActivities.map((activity) => {
                     const activityTaskIds = new Set(
                       tasks
@@ -1097,12 +1171,19 @@ export function ReportingWorkspace() {
                       Aucune photo d’avancement enregistrée pour cette période.
                     </div>
                   ) : null}
+                  </div>
                 </div>
-              </section>
+                <div className="mt-5 grid gap-5 md:grid-cols-3">
+                  <ReportList title="4.2 Travaux en cours" values={ongoingWorkValues} />
+                  <ReportList title="4.3 Blocages / risques / alertes" values={reportUpdates.map((update) => update.blockers).filter(Boolean) as string[]} red />
+                  <ReportList title="4.4 Prochaines étapes" values={reportUpdates.map((update) => update.next_steps).filter(Boolean) as string[]} />
+                </div>
+              </div>
+            </section>
 
             <section className="mt-8">
               <h3 className="border-b-2 border-[var(--opc-red)] pb-2 text-lg font-black uppercase">
-                6. Visa et validation
+                5. Visa et validation
               </h3>
               <div className="mt-4 grid grid-cols-2 overflow-hidden rounded-xl border border-[var(--opc-border)]">
                 <div className="border-r border-[var(--opc-border)] p-5">

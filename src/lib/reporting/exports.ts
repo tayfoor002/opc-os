@@ -8,6 +8,11 @@ export type ExportTask = {
   baselineProgress: number;
   currentProgress: number;
   periodIncrease: number;
+  measurement: string;
+  buildingSteps: Array<{
+    label: string;
+    progress: number;
+  }>;
   activityContribution: number;
   periodContribution: number;
   workSummary: string;
@@ -670,6 +675,75 @@ export async function downloadReportWord(
         }),
       ],
     }),
+    new Paragraph({
+      spacing: { before: 140, after: 70 },
+      children: [
+        new TextRun({
+          text: "AVANCEMENT GLOBAL PAR ACTIVITÉ",
+          bold: true,
+          color: navy,
+          size: 17,
+        }),
+      ],
+    }),
+    ...data.activities.map(
+      (activity) =>
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          borders: noBorders,
+          rows: [
+            new TableRow({
+              children: [
+                new TableCell({
+                  width: { size: 42, type: WidthType.PERCENTAGE },
+                  children: [
+                    new Paragraph({
+                      children: [
+                        new TextRun({
+                          text: `${activity.code} - ${activity.name}`,
+                          bold: true,
+                          color: navy,
+                          size: 16,
+                        }),
+                      ],
+                    }),
+                  ],
+                  margins: { top: 70, bottom: 70, left: 100, right: 100 },
+                }),
+                new TableCell({
+                  width: { size: 58, type: WidthType.PERCENTAGE },
+                  children: [
+                    new Paragraph({
+                      alignment: AlignmentType.RIGHT,
+                      spacing: { after: 35 },
+                      children: [
+                        new TextRun({
+                          text: `${activity.progress}%`,
+                          bold: true,
+                          color: blue,
+                          size: 17,
+                        }),
+                        new TextRun({
+                          text: `   +${activity.periodIncrease}%`,
+                          bold: true,
+                          color: green,
+                          size: 16,
+                        }),
+                      ],
+                    }),
+                    progressBarTable(
+                      activity.baselineProgress,
+                      activity.progress,
+                      activity.periodIncrease,
+                    ),
+                  ],
+                  margins: { top: 70, bottom: 70, left: 100, right: 100 },
+                }),
+              ],
+            }),
+          ],
+        }),
+    ),
     new Paragraph({ spacing: { after: 100 } }),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
@@ -780,6 +854,16 @@ export async function downloadReportWord(
                           }),
                         ],
                       }),
+                      new Paragraph({
+                        spacing: { before: 35 },
+                        children: [
+                          new TextRun({
+                            text: task.measurement,
+                            color: "475569",
+                            size: 14,
+                          }),
+                        ],
+                      }),
                     ],
                     margins: { top: 85, bottom: 85, left: 100, right: 100 },
                   }),
@@ -809,6 +893,72 @@ export async function downloadReportWord(
                         task.currentProgress,
                         task.periodIncrease,
                       ),
+                      ...(task.buildingSteps.length
+                        ? [
+                            new Paragraph({
+                              spacing: { before: 90, after: 40 },
+                              children: [
+                                new TextRun({
+                                  text: "ÉTAPES DE CONSTRUCTION",
+                                  bold: true,
+                                  color: navy,
+                                  size: 14,
+                                }),
+                              ],
+                            }),
+                            ...task.buildingSteps.map(
+                              (step) =>
+                                new Table({
+                                  width: { size: 100, type: WidthType.PERCENTAGE },
+                                  borders: noBorders,
+                                  rows: [
+                                    new TableRow({
+                                      children: [
+                                        new TableCell({
+                                          width: { size: 40, type: WidthType.PERCENTAGE },
+                                          children: [
+                                            new Paragraph({
+                                              children: [
+                                                new TextRun({
+                                                  text: step.label,
+                                                  color: "475569",
+                                                  size: 13,
+                                                }),
+                                              ],
+                                            }),
+                                          ],
+                                          margins: { top: 25, bottom: 25, left: 0, right: 60 },
+                                        }),
+                                        new TableCell({
+                                          width: { size: 60, type: WidthType.PERCENTAGE },
+                                          children: [
+                                            new Paragraph({
+                                              alignment: AlignmentType.RIGHT,
+                                              spacing: { after: 20 },
+                                              children: [
+                                                new TextRun({
+                                                  text: `${step.progress}%`,
+                                                  bold: true,
+                                                  color: blue,
+                                                  size: 13,
+                                                }),
+                                              ],
+                                            }),
+                                            progressBarTable(
+                                              step.progress,
+                                              step.progress,
+                                              0,
+                                            ),
+                                          ],
+                                          margins: { top: 25, bottom: 25, left: 60, right: 0 },
+                                        }),
+                                      ],
+                                    }),
+                                  ],
+                                }),
+                            ),
+                          ]
+                        : []),
                     ],
                     margins: { top: 85, bottom: 85, left: 100, right: 100 },
                   }),
@@ -842,15 +992,21 @@ export async function downloadReportWord(
     ...bulletParagraphs(data.resources.equipment),
     sectionTitle("4. TRAVAUX RÉALISÉS"),
     ...bulletParagraphs(data.completedWork),
-    sectionTitle("5. TRAVAUX EN COURS"),
-    ...bulletParagraphs(data.ongoingWork),
-    sectionTitle("6. BLOCAGES, RISQUES ET ALERTES"),
-    ...bulletParagraphs(data.blockers),
-    sectionTitle("7. PROCHAINES ÉTAPES"),
-    ...bulletParagraphs(data.nextSteps),
   );
 
-  children.push(sectionTitle("8. PLANCHES PHOTOGRAPHIQUES"));
+  children.push(
+    new Paragraph({
+      spacing: { before: 180, after: 100 },
+      children: [
+        new TextRun({
+          text: "PHOTOS DES TRAVAUX RÉALISÉS",
+          bold: true,
+          color: navy,
+          size: 20,
+        }),
+      ],
+    }),
+  );
   if (data.photos.length) {
     for (let index = 0; index < data.photos.length; index += 2) {
       const photoCells = await Promise.all(
@@ -925,7 +1081,13 @@ export async function downloadReportWord(
   }
 
   children.push(
-    sectionTitle("9. VISA ET VALIDATION"),
+    sectionTitle("5. TRAVAUX EN COURS"),
+    ...bulletParagraphs(data.ongoingWork),
+    sectionTitle("6. BLOCAGES, RISQUES ET ALERTES"),
+    ...bulletParagraphs(data.blockers),
+    sectionTitle("7. PROCHAINES ÉTAPES"),
+    ...bulletParagraphs(data.nextSteps),
+    sectionTitle("8. VISA ET VALIDATION"),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       borders: allBorders,

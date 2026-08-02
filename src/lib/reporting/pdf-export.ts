@@ -236,6 +236,62 @@ export async function downloadReportPdf(
       );
     }
   };
+  const renderPhotoBoards = async () => {
+    if (!data.photos.length) {
+      wrapped("Aucune photo d’avancement enregistrée pour cette période.", margin, contentWidth, {
+        color: slate,
+        size: 9,
+      });
+      return;
+    }
+    for (let index = 0; index < data.photos.length; index += 2) {
+      ensure(72);
+      const pair = data.photos.slice(index, index + 2);
+      const gap = 6;
+      const cardWidth = (contentWidth - gap) / 2;
+      for (let offset = 0; offset < pair.length; offset += 1) {
+        const photo = pair[offset];
+        const x = margin + offset * (cardWidth + gap);
+        pdf.setDrawColor(...border);
+        pdf.setFillColor(248, 250, 252);
+        pdf.roundedRect(x, y, cardWidth, 67, 2, 2, "FD");
+        try {
+          const image = await loadPdfImage(photo.url);
+          const dimensions = fitInside(
+            image.width,
+            image.height,
+            cardWidth - 6,
+            43,
+          );
+          pdf.addImage(
+            image.bytes,
+            image.format,
+            x + (cardWidth - dimensions.width) / 2,
+            y + 3 + (43 - dimensions.height) / 2,
+            dimensions.width,
+            dimensions.height,
+          );
+        } catch {
+          pdf.setTextColor(...slate);
+          pdf.setFontSize(8);
+          pdf.text("Photo indisponible", x + cardWidth / 2, y + 25, {
+            align: "center",
+          });
+        }
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(...navy);
+        pdf.setFontSize(7.5);
+        pdf.text(`Photo ${index + offset + 1} - ${photo.activity}`, x + 3, y + 51);
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(...slate);
+        pdf.setFontSize(6.8);
+        pdf.text(`${photo.task} | ${photo.date}`, x + 3, y + 56);
+        const caption = pdf.splitTextToSize(photo.caption || "-", cardWidth - 6) as string[];
+        pdf.text(caption.slice(0, 2), x + 3, y + 61);
+      }
+      y += 72;
+    }
+  };
 
   header();
   pdf.setFont("helvetica", "bold");
@@ -288,6 +344,52 @@ export async function downloadReportPdf(
     y + 27,
   );
   y += 35;
+
+  if (data.activities.length) {
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7);
+    pdf.setTextColor(...navy);
+    pdf.text("AVANCEMENT GLOBAL PAR ACTIVITÉ", margin, y);
+    y += 3;
+    const activityGap = 4;
+    const activityCardWidth = (contentWidth - activityGap) / 2;
+    for (let index = 0; index < data.activities.length; index += 2) {
+      ensure(14);
+      const pair = data.activities.slice(index, index + 2);
+      pair.forEach((activity, offset) => {
+        const x = margin + offset * (activityCardWidth + activityGap);
+        pdf.setFillColor(248, 250, 252);
+        pdf.roundedRect(x, y, activityCardWidth, 11, 1.5, 1.5, "F");
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(6.5);
+        pdf.setTextColor(...navy);
+        const activityLabel = `${activity.code} - ${activity.name}`;
+        pdf.text(
+          (pdf.splitTextToSize(activityLabel, activityCardWidth - 28) as string[])[0],
+          x + 3,
+          y + 4,
+        );
+        pdf.setTextColor(...blue);
+        pdf.text(`${activity.progress}%`, x + activityCardWidth - 15, y + 4, {
+          align: "right",
+        });
+        pdf.setTextColor(...green);
+        pdf.text(`+${activity.periodIncrease}%`, x + activityCardWidth - 3, y + 4, {
+          align: "right",
+        });
+        progressBar(
+          x + 3,
+          y + 6.5,
+          activityCardWidth - 6,
+          2.2,
+          activity.baselineProgress,
+          activity.progress,
+          activity.periodIncrease,
+        );
+      });
+      y += 14;
+    }
+  }
 
   const metrics: Array<[string, string | number]> = [
     ["Terminées", data.metrics.completed],
@@ -375,7 +477,7 @@ export async function downloadReportPdf(
       });
     }
     for (const task of activity.tasks) {
-      const rowHeight = 11;
+      const rowHeight = 14;
       ensure(rowHeight + 2);
       pdf.setDrawColor(226, 232, 240);
       pdf.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
@@ -394,6 +496,13 @@ export async function downloadReportPdf(
         `${task.status} · ${task.prerequisiteStatus}`,
         margin + 3,
         y + 8.2,
+      );
+      pdf.setTextColor(...slate);
+      pdf.setFontSize(5.8);
+      pdf.text(
+        (pdf.splitTextToSize(task.measurement, 74) as string[])[0],
+        margin + 3,
+        y + 11.6,
       );
       progressBar(
         margin + 82,
@@ -415,6 +524,56 @@ export async function downloadReportPdf(
         align: "right",
       });
       y += rowHeight;
+      if (task.buildingSteps.length) {
+        pdf.setFillColor(248, 250, 252);
+        const phaseRows = Math.ceil(task.buildingSteps.length / 2);
+        ensure(phaseRows * 6.2 + 8);
+        pdf.roundedRect(
+          margin + 3,
+          y,
+          contentWidth - 6,
+          phaseRows * 6.2 + 5,
+          1.5,
+          1.5,
+          "F",
+        );
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(6.2);
+        pdf.setTextColor(...navy);
+        pdf.text("ÉTAPES DE CONSTRUCTION", margin + 6, y + 3.8);
+        y += 5;
+        const stepGap = 8;
+        const stepWidth = (contentWidth - 20) / 2;
+        for (let stepIndex = 0; stepIndex < task.buildingSteps.length; stepIndex += 2) {
+          task.buildingSteps.slice(stepIndex, stepIndex + 2).forEach((step, offset) => {
+            const x = margin + 6 + offset * (stepWidth + stepGap);
+            pdf.setFont("helvetica", "normal");
+            pdf.setTextColor(...slate);
+            pdf.setFontSize(5.8);
+            pdf.text(
+              (pdf.splitTextToSize(step.label, stepWidth * 0.47) as string[])[0],
+              x,
+              y + 3.4,
+            );
+            progressBar(
+              x + stepWidth * 0.49,
+              y + 1.4,
+              stepWidth * 0.39,
+              2.2,
+              step.progress,
+              step.progress,
+              0,
+            );
+            pdf.setFont("helvetica", "bold");
+            pdf.setTextColor(...blue);
+            pdf.text(`${step.progress}%`, x + stepWidth, y + 3.4, {
+              align: "right",
+            });
+          });
+          y += 6.2;
+        }
+        y += 2;
+      }
     }
     y += 2;
   }
@@ -432,6 +591,13 @@ export async function downloadReportPdf(
 
   section(4, "TRAVAUX RÉALISÉS");
   bullets(data.completedWork);
+  wrapped("PHOTOS DES TRAVAUX RÉALISÉS", margin, contentWidth, {
+    bold: true,
+    size: 9,
+    color: navy,
+  });
+  y += 2;
+  await renderPhotoBoards();
   section(5, "TRAVAUX EN COURS");
   bullets(data.ongoingWork);
   section(6, "BLOCAGES, RISQUES ET ALERTES");
@@ -439,62 +605,7 @@ export async function downloadReportPdf(
   section(7, "PROCHAINES ÉTAPES");
   bullets(data.nextSteps);
 
-  section(8, "PLANCHES PHOTOGRAPHIQUES");
-  if (!data.photos.length) {
-    wrapped("Aucune photo d’avancement enregistrée pour cette période.", margin, contentWidth, {
-      color: slate,
-      size: 9,
-    });
-  }
-  for (let index = 0; index < data.photos.length; index += 2) {
-    ensure(72);
-    const pair = data.photos.slice(index, index + 2);
-    const gap = 6;
-    const cardWidth = (contentWidth - gap) / 2;
-    for (let offset = 0; offset < pair.length; offset += 1) {
-      const photo = pair[offset];
-      const x = margin + offset * (cardWidth + gap);
-      pdf.setDrawColor(...border);
-      pdf.setFillColor(248, 250, 252);
-      pdf.roundedRect(x, y, cardWidth, 67, 2, 2, "FD");
-      try {
-        const image = await loadPdfImage(photo.url);
-        const dimensions = fitInside(
-          image.width,
-          image.height,
-          cardWidth - 6,
-          43,
-        );
-        pdf.addImage(
-          image.bytes,
-          image.format,
-          x + (cardWidth - dimensions.width) / 2,
-          y + 3 + (43 - dimensions.height) / 2,
-          dimensions.width,
-          dimensions.height,
-        );
-      } catch {
-        pdf.setTextColor(...slate);
-        pdf.setFontSize(8);
-        pdf.text("Photo indisponible", x + cardWidth / 2, y + 25, {
-          align: "center",
-        });
-      }
-      pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(...navy);
-      pdf.setFontSize(7.5);
-      pdf.text(`Photo ${index + offset + 1} - ${photo.activity}`, x + 3, y + 51);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(...slate);
-      pdf.setFontSize(6.8);
-      pdf.text(`${photo.task} | ${photo.date}`, x + 3, y + 56);
-      const caption = pdf.splitTextToSize(photo.caption || "-", cardWidth - 6) as string[];
-      pdf.text(caption.slice(0, 2), x + 3, y + 61);
-    }
-    y += 72;
-  }
-
-  section(9, "VISA ET VALIDATION");
+  section(8, "VISA ET VALIDATION");
   ensure(32);
   const signatureWidth = (contentWidth - 6) / 2;
   ["ALSTOM", "AVANZIT"].forEach((label, index) => {
