@@ -1211,7 +1211,9 @@ export function TasksWorkspace() {
                   <th className="px-5 py-4">Priorité</th>
                   <th className="px-5 py-4">Statut</th>
                   <th className="px-5 py-4">Prérequis</th>
-                  <th className="px-5 py-4 text-right">Actions</th>
+                  <th className="sticky right-0 z-20 w-[196px] min-w-[196px] bg-slate-50 px-3 py-4 text-right shadow-[-12px_0_18px_-18px_rgba(15,23,42,0.55)]">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1241,7 +1243,7 @@ export function TasksWorkspace() {
                           openEdit(task);
                         }
                       }}
-                      className={`cursor-pointer border-b border-slate-100 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--opc-blue)] ${
+                      className={`group cursor-pointer border-b border-slate-100 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--opc-blue)] ${
                         prerequisiteCompliant
                           ? "bg-emerald-50/70 hover:bg-emerald-100/70"
                           : "bg-red-50/60 hover:bg-red-100/60"
@@ -1381,8 +1383,15 @@ export function TasksWorkspace() {
                               : "À configurer"}
                         </span>
                       </td>
-                      <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}>
-                        <div className="flex justify-end gap-2">
+                      <td
+                        className={`sticky right-0 z-10 w-[196px] min-w-[196px] px-3 py-4 shadow-[-12px_0_18px_-18px_rgba(15,23,42,0.55)] transition-colors ${
+                          prerequisiteCompliant
+                            ? "bg-emerald-50 group-hover:bg-emerald-100"
+                            : "bg-red-50 group-hover:bg-red-100"
+                        }`}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-end gap-2 whitespace-nowrap">
                           <button
                             type="button"
                             onClick={() => openProgressUpdate(task)}
