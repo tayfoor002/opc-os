@@ -10,14 +10,20 @@ import {
   Plus,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Wrench,
 } from "lucide-react";
 
 import { ConfirmDeleteDialog } from "@/components/ui/ConfirmDeleteDialog";
 import { createClient } from "@/lib/supabase/client";
+import {
+  suggestDocumentsForTask,
+  type SuggestibleDocument,
+} from "@/lib/tasks/document-suggestions";
 
 type Option = { id: string; name: string; code?: string };
+type DocumentOption = Option & SuggestibleDocument;
 type Person = Option & { company: string; role: string };
 type Tool = Option & {
   asset_type: "tool" | "machine";
@@ -72,7 +78,10 @@ export function TaskPrerequisitesPanel({
   const supabase = useMemo(() => createClient(), []);
   const [tools, setTools] = useState<Tool[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
-  const [documents, setDocuments] = useState<Option[]>([]);
+  const [documents, setDocuments] = useState<DocumentOption[]>([]);
+  const [documentSuggestions, setDocumentSuggestions] = useState<
+    Array<{ document: DocumentOption; score: number; reasons: string[] }>
+  >([]);
   const [certificationSuggestions, setCertificationSuggestions] = useState<
     string[]
   >([]);
@@ -105,6 +114,7 @@ export function TaskPrerequisitesPanel({
       toolsResult,
       equipmentResult,
       documentsResult,
+      taskContextResult,
       certificationCatalogResult,
       certificationsResult,
       taskToolsResult,
@@ -133,9 +143,14 @@ export function TaskPrerequisitesPanel({
         .order("name"),
       supabase
         .from("documents")
-        .select("id,title")
+        .select("id,title,reference,revision,document_type,document_subcategory,category,zone_id,phase_id,activity_id")
         .eq("project_id", projectId)
         .order("title"),
+      supabase
+        .from("tasks")
+        .select("title,description,work_type,activity_id,zone_id,phase_id,activities(name)")
+        .eq("id", taskId)
+        .maybeSingle(),
       supabase
         .from("collaborator_certifications")
         .select("certification_name,collaborator_id,valid_until")
@@ -181,6 +196,7 @@ export function TaskPrerequisitesPanel({
       toolsResult.error,
       equipmentResult.error,
       documentsResult.error,
+      taskContextResult.error,
       certificationCatalogResult.error,
       certificationsResult.error,
       taskToolsResult.error,
@@ -205,12 +221,11 @@ export function TaskPrerequisitesPanel({
       }));
     setTools((toolsResult.data ?? []) as Tool[]);
     setEquipment((equipmentResult.data ?? []) as Equipment[]);
-    setDocuments(
-      (documentsResult.data ?? []).map((document) => ({
-        id: document.id,
-        name: document.title,
-      })),
-    );
+    const loadedDocuments = (documentsResult.data ?? []).map((document) => ({
+      ...document,
+      name: `${document.reference ? `${document.reference} — ` : ""}${document.title}${document.revision ? ` — Rév. ${document.revision}` : ""}`,
+    })) as DocumentOption[];
+    setDocuments(loadedDocuments);
     setCertificationSuggestions([
       ...new Set(
         (certificationCatalogResult.data ?? []).map(
@@ -296,15 +311,45 @@ export function TaskPrerequisitesPanel({
       }),
     );
     setDocumentLinks(
-      (requirementsResult.data ?? []).map((item) => ({
+      (requirementsResult.data ?? []).map((item) => {
+        const document = loadedDocuments.find(
+          (candidate) => candidate.id === item.document_id,
+        );
+        return {
         id: item.id,
         label: item.label,
-        meta: `${item.requirement_type} - ${
-          item.document_id ? "Disponible" : "Manquant"
-        }`,
+        meta: `${item.requirement_type} · ${document?.reference ?? "Sans référence"}${document?.revision ? ` · Rév. ${document.revision}` : ""} · ${item.document_id ? "Disponible" : "Manquant"}`,
         satisfied: item.validated,
         canValidate: Boolean(item.document_id),
-      })),
+        };
+      }),
+    );
+    const taskContext = taskContextResult.data;
+    const activity = Array.isArray(taskContext?.activities)
+      ? taskContext.activities[0]
+      : taskContext?.activities;
+    const linkedDocumentIds = new Set(
+      (requirementsResult.data ?? [])
+        .map((requirement) => requirement.document_id)
+        .filter(Boolean),
+    );
+    setDocumentSuggestions(
+      taskContext
+        ? suggestDocumentsForTask(loadedDocuments, {
+            title: taskContext.title,
+            description: taskContext.description,
+            workType: taskContext.work_type,
+            activityId: taskContext.activity_id,
+            activityName: activity?.name ?? "",
+            zoneId: taskContext.zone_id,
+            phaseId: taskContext.phase_id,
+          })
+            .filter((suggestion) => !linkedDocumentIds.has(suggestion.document.id))
+            .map((suggestion) => ({
+              ...suggestion,
+              document: suggestion.document as DocumentOption,
+            }))
+        : [],
     );
     setManualLinks(
       (manualResult.data ?? []).map((item) => ({
@@ -335,6 +380,42 @@ export function TaskPrerequisitesPanel({
     const result = await supabase.from(table).insert(payload);
     if (result.error) setError(result.error.message);
     else {
+      await load();
+      onStatusChange?.();
+    }
+    setSaving(false);
+  }
+
+  async function addSuggestedDocuments(documentIds: string[]) {
+    const selected = documentSuggestions.filter((suggestion) =>
+      documentIds.includes(suggestion.document.id),
+    );
+    if (!selected.length) return;
+    setSaving(true);
+    setError("");
+    const result = await supabase.from("task_document_requirements").insert(
+      selected.map(({ document }) => ({
+        task_id: taskId,
+        document_id: document.id,
+        requirement_type: document.document_type,
+        label: `${document.reference ? `${document.reference} — ` : ""}${document.title}`,
+        notes: "Prérequis suggéré automatiquement selon l’activité et la tâche.",
+      })),
+    );
+    if (result.error) setError(result.error.message);
+    else {
+      const linkResult = await supabase.from("task_documents").upsert(
+        selected.map(({ document }) => ({
+          task_id: taskId,
+          document_id: document.id,
+        })),
+        { onConflict: "task_id,document_id" },
+      );
+      if (linkResult.error) {
+        setError(
+          `Le prérequis a été ajouté, mais la liaison au volet Documents a échoué : ${linkResult.error.message}`,
+        );
+      }
       await load();
       onStatusChange?.();
     }
@@ -651,6 +732,63 @@ export function TaskPrerequisitesPanel({
             <FileCheck2 className="h-4 w-4 text-[var(--opc-blue)]" />
             Plans, procédures et documents
           </h4>
+          {documentSuggestions.length ? (
+            <div className="mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="flex items-center gap-2 text-sm font-black text-violet-800">
+                    <Sparkles className="h-4 w-4" /> Suggestions OPC OS
+                  </p>
+                  <p className="mt-1 text-xs text-violet-700">
+                    Plans et procédures rapprochés du métier, de l’activité, de la zone et de la phase. Vérifiez la révision avant de les retenir.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() =>
+                    void addSuggestedDocuments(
+                      documentSuggestions.map(({ document }) => document.id),
+                    )
+                  }
+                  className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50"
+                >
+                  Ajouter toutes
+                </button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {documentSuggestions.map(({ document, reasons }) => (
+                  <div key={document.id} className="flex items-center gap-3 rounded-xl bg-white p-3 shadow-sm">
+                    <FileCheck2 className="h-4 w-4 shrink-0 text-violet-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-black">{document.title}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">
+                        {document.document_type === "plan" ? "Plan" : "Procédure"} · {document.reference || "Sans référence"} · Rév. {document.revision || "—"}
+                      </p>
+                      {reasons.length ? (
+                        <p className="mt-1 truncate text-[10px] font-bold text-violet-600">
+                          Correspondance : {[...new Set(reasons)].slice(0, 5).join(", ")}
+                        </p>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void addSuggestedDocuments([document.id])}
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-700 text-white disabled:opacity-50"
+                      aria-label={`Ajouter ${document.title} aux prérequis`}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="mt-3 rounded-xl border border-dashed border-slate-200 p-3 text-center text-xs text-slate-400">
+              Aucun plan ou procédure correspondant automatiquement à cette tâche.
+            </p>
+          )}
           <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-[130px_minmax(0,1fr)_auto]">
             <select
               value={documentType}

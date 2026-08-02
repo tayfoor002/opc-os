@@ -6,10 +6,13 @@ import {
   AlertTriangle,
   Archive,
   ArrowDownAZ,
+  Building2,
+  Cable,
   CalendarClock,
   Camera,
   CheckCircle2,
   CirclePlus,
+  Construction,
   Edit3,
   ExternalLink,
   Eye,
@@ -18,6 +21,8 @@ import {
   Link2,
   ListChecks,
   Loader2,
+  PackageCheck,
+  RadioTower,
   RefreshCw,
   Search,
   Trash2,
@@ -137,6 +142,36 @@ const priorityRank: Record<TaskPriority, number> = {
   high: 3,
   critical: 4,
 };
+
+function normalized(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function TaskKindIcon({ task }: { task: Task }) {
+  const text = normalized(`${task.title} ${task.description ?? ""}`);
+  const config =
+    task.work_type === "gc_building" || /batiment|guerite|local technique/.test(text)
+      ? { Icon: Building2, className: "bg-blue-100 text-blue-700" }
+      : task.work_type === "gc_excavation_trench" || task.work_type === "gc_concrete_trench" || /tranche|terrassement|remblaiement/.test(text)
+        ? { Icon: Construction, className: "bg-amber-100 text-amber-700" }
+        : /cable|buse|soufflage|fibre|\bfo\b|energie/.test(text)
+          ? { Icon: Cable, className: "bg-violet-100 text-violet-700" }
+          : /massif|beton|ferraillage/.test(text)
+            ? { Icon: Construction, className: "bg-orange-100 text-orange-700" }
+            : /mat|potence|portique|signal|balise|pedale/.test(text)
+              ? { Icon: RadioTower, className: "bg-red-100 text-red-700" }
+              : /armoire|equipement|tsv/.test(text)
+                ? { Icon: PackageCheck, className: "bg-emerald-100 text-emerald-700" }
+                : { Icon: ListChecks, className: "bg-slate-100 text-slate-600" };
+  return (
+    <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${config.className}`}>
+      <config.Icon className="h-4 w-4" />
+    </span>
+  );
+}
 
 export function TasksWorkspace() {
   const supabase = useMemo(() => createClient(), []);
@@ -487,18 +522,43 @@ export function TasksWorkspace() {
     ).length,
   };
 
+  function casaportAssignmentDefaults(activity: Activity | undefined) {
+    const casaPortElement = zoneElements.find(
+      (element) => element.id === activity?.zone_element_id,
+    );
+    const isCasaPort =
+      casaPortElement?.code === "CASA-PORT" ||
+      activity?.code.startsWith("CP-") ||
+      normalized(casaPortElement?.name ?? "").includes("casa port");
+    const alstom = isCasaPort
+      ? collaborators.find((person) => {
+          const name = normalized(person.full_name);
+          const simplifiedName = name.replace(/(.)\1+/g, "$1");
+          return normalized(person.company).includes("alstom") && simplifiedName.includes("ahmed") && simplifiedName.includes("adar");
+        })
+      : undefined;
+    const avanzit = isCasaPort
+      ? collaborators.find((person) => {
+          const name = normalized(person.full_name);
+          return normalized(person.company).includes("avanzit") && name.includes("soufiane") && name.includes("ait") && name.includes("taleb");
+        })
+      : undefined;
+    return { alstom, avanzit };
+  }
+
   function openCreate(activityId = "") {
     setDrawerMode("task");
     setEditing(null);
     const activity = activities.find((item) => item.id === activityId);
+    const defaults = casaportAssignmentDefaults(activity);
     setForm({
       ...emptyForm,
       activity_id: activityId,
       zone_id: activity?.zone_id ?? "",
       phase_id: activity?.phase_id ?? "",
       zone_element_id: activity?.zone_element_id ?? "",
-      alstom_supervisor_id: activity?.alstom_supervisor_id ?? "",
-      avanzit_site_manager_id: activity?.avanzit_site_manager_id ?? "",
+      alstom_supervisor_id: activity?.alstom_supervisor_id ?? defaults.alstom?.id ?? "",
+      avanzit_site_manager_id: activity?.avanzit_site_manager_id ?? defaults.avanzit?.id ?? "",
     });
     setDocumentQuery("");
     setProgressUpdates([]);
@@ -1189,7 +1249,10 @@ export function TasksWorkspace() {
                       aria-label={`Voir le contenu de la tâche ${task.title}`}
                     >
                       <td className="px-5 py-4">
-                        <div className="font-black text-[var(--opc-ink)]">{task.title}</div>
+                        <div className="flex items-start gap-3">
+                          <TaskKindIcon task={task} />
+                          <div className="min-w-0">
+                            <div className="font-black text-[var(--opc-ink)]">{task.title}</div>
                         {task.status === "done" ||
                         Boolean(task.due_date && task.due_date < today) ? (
                           <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-slate-600">
@@ -1197,7 +1260,9 @@ export function TasksWorkspace() {
                             Archivée
                           </span>
                         ) : null}
-                        {task.description ? <div className="mt-1 max-w-md truncate text-xs text-slate-500">{task.description}</div> : null}
+                            {task.description ? <div className="mt-1 max-w-md truncate text-xs text-slate-500">{task.description}</div> : null}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-5 py-4">
                         {task.document_ids?.length ? (
@@ -1390,12 +1455,17 @@ export function TasksWorkspace() {
                     value={form.activity_id}
                     onChange={(event) => {
                       const activity = activities.find((item) => item.id === event.target.value);
+                      const defaults = casaportAssignmentDefaults(activity);
                       setForm({
                         ...form,
                         activity_id: event.target.value,
                         zone_id: activity?.zone_id ?? form.zone_id,
                         phase_id: activity?.phase_id ?? form.phase_id,
                         zone_element_id: activity?.zone_element_id ?? form.zone_element_id,
+                        alstom_supervisor_id:
+                          activity?.alstom_supervisor_id ?? defaults.alstom?.id ?? form.alstom_supervisor_id,
+                        avanzit_site_manager_id:
+                          activity?.avanzit_site_manager_id ?? defaults.avanzit?.id ?? form.avanzit_site_manager_id,
                       });
                     }}
                     className="input"

@@ -90,6 +90,17 @@ function activityMatches(existingName: string, targetKey: string) {
   return (tokens[targetKey] ?? []).some((token) => value.includes(token));
 }
 
+function collaboratorMatches(actualName: string, expectedTokens: string[]) {
+  const actualTokens = normalizedLabel(actualName)
+    .replace(/(.)\1+/g, "$1")
+    .split(" ");
+  return expectedTokens.every((expected) =>
+    actualTokens.some(
+      (actual) => actual.startsWith(expected) || expected.startsWith(actual),
+    ),
+  );
+}
+
 export async function applyCasaportProgressImport(
   input: unknown,
 ): Promise<CasaportImportResult> {
@@ -112,6 +123,26 @@ export async function applyCasaportProgressImport(
     return { success: false, error: "Le projet PDD est introuvable." };
   }
   const projectId = projectResult.data.id;
+
+  const collaboratorsResult = await supabase
+    .from("collaborators")
+    .select("id,full_name,company")
+    .eq("project_id", projectId)
+    .eq("active", true);
+  if (collaboratorsResult.error) {
+    return { success: false, error: collaboratorsResult.error.message };
+  }
+  const alstomSupervisor = (collaboratorsResult.data ?? []).find(
+    (person) =>
+      normalizedLabel(person.company).includes("alstom") &&
+      collaboratorMatches(person.full_name, ["ahmed", "adar"]),
+  );
+  const alstomSupervisorId = alstomSupervisor?.id;
+  const avanzitSiteManagerId = (collaboratorsResult.data ?? []).find(
+    (person) =>
+      normalizedLabel(person.company).includes("avanzit") &&
+      collaboratorMatches(person.full_name, ["soufiane", "ait", "taleb"]),
+  )?.id;
 
   const zoneResult = await supabase
     .from("zones")
@@ -216,6 +247,23 @@ export async function applyCasaportProgressImport(
       activity.id,
     ]),
   );
+  const importedActivityIds = [...activityIds.values()];
+  if (alstomSupervisorId && importedActivityIds.length) {
+    const assignment = await supabase
+      .from("activities")
+      .update({ alstom_supervisor_id: alstomSupervisorId })
+      .in("id", importedActivityIds)
+      .is("alstom_supervisor_id", null);
+    if (assignment.error) return { success: false, error: assignment.error.message };
+  }
+  if (avanzitSiteManagerId && importedActivityIds.length) {
+    const assignment = await supabase
+      .from("activities")
+      .update({ avanzit_site_manager_id: avanzitSiteManagerId })
+      .in("id", importedActivityIds)
+      .is("avanzit_site_manager_id", null);
+    if (assignment.error) return { success: false, error: assignment.error.message };
+  }
 
   const taskRows = data.activities.flatMap((activity) => {
     const activityId = activityIds.get(`casaport:${activity.key}`);
@@ -259,6 +307,26 @@ export async function applyCasaportProgressImport(
   const taskIds = new Map(
     (tasksResult.data ?? []).map((task) => [task.external_progress_key, task.id]),
   );
+  const assignedTaskIds = [...taskIds.values()];
+  if (alstomSupervisorId && assignedTaskIds.length) {
+    const assignment = await supabase
+      .from("tasks")
+      .update({
+        alstom_supervisor_id: alstomSupervisorId,
+        owner: alstomSupervisor?.full_name ?? "Ahmed Adar",
+      })
+      .in("id", assignedTaskIds)
+      .is("alstom_supervisor_id", null);
+    if (assignment.error) return { success: false, error: assignment.error.message };
+  }
+  if (avanzitSiteManagerId && assignedTaskIds.length) {
+    const assignment = await supabase
+      .from("tasks")
+      .update({ avanzit_site_manager_id: avanzitSiteManagerId })
+      .in("id", assignedTaskIds)
+      .is("avanzit_site_manager_id", null);
+    if (assignment.error) return { success: false, error: assignment.error.message };
+  }
 
   for (const activity of data.activities) {
     for (const task of activity.tasks) {
