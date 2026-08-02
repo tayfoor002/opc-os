@@ -175,6 +175,7 @@ export function ReportingWorkspace() {
   const [selectedElementIds, setSelectedElementIds] = useState<string[]>([]);
   const [activityFilter, setActivityFilter] = useState("all");
   const [showOncfLogo, setShowOncfLogo] = useState(false);
+  const [showAvanzitLogo, setShowAvanzitLogo] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState<"pdf" | "word" | null>(null);
@@ -351,9 +352,14 @@ export function ReportingWorkspace() {
   );
   const isAutomaticCasaPortPlaceholder = (value: string | null) =>
     value?.trim() === "Travaux en cours selon le rapport global Casa-Port.";
+  const isAutomaticCasaPortProgress = (value: string | null) =>
+    value?.trim().startsWith("Relevé d’avancement Casa-Port :") ?? false;
   const completedWorkValues = reportUpdates
     .map((update) => update.work_done)
-    .filter(Boolean) as string[];
+    .filter(
+      (value): value is string =>
+        Boolean(value) && !isAutomaticCasaPortProgress(value),
+    );
   const ongoingWorkValues = reportUpdates
     .map((update) => update.ongoing_work)
     .filter(
@@ -560,6 +566,7 @@ export function ReportingWorkspace() {
   function buildExportData(): ReportExportData {
     return {
       showOncfLogo,
+      showAvanzitLogo,
       reportTitle: reportLabels[type],
       periodTitle: periodSubtitle(type, period.start, period.end),
       periodRange: `${period.start} - ${period.end}`,
@@ -643,7 +650,9 @@ export function ReportingWorkspace() {
                 taskUpdates
                   .map(
                     (update) =>
-                      update.work_done ||
+                      (!isAutomaticCasaPortProgress(update.work_done)
+                        ? update.work_done
+                        : null) ||
                       update.ongoing_work ||
                       update.comment,
                   )
@@ -699,7 +708,9 @@ export function ReportingWorkspace() {
           caption:
             photo.caption ||
             photo.update.comment ||
-            photo.update.work_done ||
+            (!isAutomaticCasaPortProgress(photo.update.work_done)
+              ? photo.update.work_done
+              : null) ||
             "Photo d’avancement",
         })),
       resources: {
@@ -887,6 +898,22 @@ export function ReportingWorkspace() {
             )}
             Logo ONCF
           </button>
+          <button
+            type="button"
+            onClick={() => setShowAvanzitLogo((current) => !current)}
+            className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-black ${
+              showAvanzitLogo
+                ? "border-[var(--opc-blue)] bg-blue-50 text-[var(--opc-blue)]"
+                : "border-[var(--opc-border)] bg-white text-slate-600"
+            }`}
+          >
+            {showAvanzitLogo ? (
+              <Eye className="h-4 w-4" />
+            ) : (
+              <EyeOff className="h-4 w-4" />
+            )}
+            Logo AVANZIT
+          </button>
           <button type="button" onClick={() => void loadReporting()} className="flex items-center gap-2 rounded-xl border border-[var(--opc-border)] bg-white px-4 py-3 text-sm font-bold">
             <RefreshCw className="h-4 w-4" /> Actualiser
           </button>
@@ -1058,9 +1085,11 @@ export function ReportingWorkspace() {
               </p>
             </div>
             <div className="flex h-16 items-center justify-center p-2">
-              <span className="text-2xl font-black tracking-[0.12em] text-white">
-                AVANZIT
-              </span>
+              {showAvanzitLogo ? (
+                <span className="text-3xl font-black tracking-[0.1em] text-white">
+                  AVANZIT
+                </span>
+              ) : null}
             </div>
           </header>
 
@@ -1112,8 +1141,8 @@ export function ReportingWorkspace() {
                   large
                 />
                 <div className="mt-3 flex flex-wrap gap-4 text-[10px] font-bold text-slate-300">
-                  <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-500" /> Acquis avant période {globalBaseline}%</span>
-                  <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-400" /> Gain +{globalGain}%</span>
+                  <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-600" /> Acquis avant période {globalBaseline}%</span>
+                  <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-300" /> Gain +{globalGain}%</span>
                   <span><i className="mr-1 inline-block h-2 w-2 rounded-sm bg-slate-600" /> Reste {Math.max(0, Math.round((100 - globalProgress) * 10) / 10)}%</span>
                 </div>
                 <div className="mt-5 grid gap-3 border-t border-white/10 pt-5 md:grid-cols-2">
@@ -1195,7 +1224,7 @@ export function ReportingWorkspace() {
                                         · {prerequisite?.total_requirements && prerequisiteMissing === 0 ? "Prérequis OK" : "Prérequis à vérifier"}
                                       </span>
                                     </p>
-                                    <p className="mt-1 text-[10px] font-semibold text-slate-500">
+                                    <p className="mt-2 inline-flex rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-800">
                                       {task.progress_mode === "quantity"
                                         ? `Réalisé ${Math.round(analysis.quantityAtPeriodEnd * 100) / 100} ${task.progress_unit || "u"} / ${Number(task.target_quantity ?? 0)} ${task.progress_unit || "u"}`
                                         : task.progress_mode === "building"
@@ -1205,8 +1234,8 @@ export function ReportingWorkspace() {
                                     </div>
                                     <SegmentedProgressBar baseline={analysis.baseline} current={analysis.current} gain={analysis.periodIncrease} compact />
                                     <div className="text-right">
-                                      <p className="text-base font-black text-[var(--opc-blue)]">{analysis.current}%</p>
-                                      <p className="text-[10px] font-black text-emerald-600">+{analysis.periodIncrease}%</p>
+                                      <p className="text-2xl font-black text-emerald-700">{analysis.current}%</p>
+                                      <p className="text-xs font-black text-emerald-600">+{analysis.periodIncrease}%</p>
                                     </div>
                                   </div>
                                   {task.progress_mode === "building" ? (
@@ -1215,10 +1244,10 @@ export function ReportingWorkspace() {
                                         .filter((phase) => phase.task_id === task.id)
                                         .sort((left, right) => left.sort_order - right.sort_order)
                                         .map((phase) => (
-                                          <div key={phase.code} className="grid grid-cols-[minmax(120px,1fr)_minmax(100px,1.2fr)_38px] items-center gap-2">
-                                            <span className="truncate text-[9px] font-bold text-slate-600">{phase.label}</span>
+                                          <div key={phase.code} className="grid grid-cols-[minmax(120px,1fr)_minmax(100px,1.2fr)_46px] items-center gap-2 rounded-lg bg-white px-2 py-1.5">
+                                            <span className="truncate text-[11px] font-black text-slate-700">{phase.label}</span>
                                             <SegmentedProgressBar baseline={Number(phase.progress)} current={Number(phase.progress)} gain={0} compact />
-                                            <span className="text-right text-[9px] font-black text-[var(--opc-blue)]">{Number(phase.progress)}%</span>
+                                            <span className="text-right text-xs font-black text-emerald-700">{Number(phase.progress)}%</span>
                                           </div>
                                         ))}
                                     </div>
@@ -1299,7 +1328,12 @@ export function ReportingWorkspace() {
                                 <p className="font-black text-[var(--opc-blue)]">Photo {index + 1} — {taskName(photo.update.task_id)}</p>
                                 <p className="mt-1 text-slate-500">{photo.update.update_date}</p>
                                 <p className="mt-2 leading-5 text-slate-600">
-                                  {photo.caption || photo.update.comment || photo.update.work_done || "Photo d’avancement"}
+                                  {photo.caption ||
+                                    photo.update.comment ||
+                                    (!isAutomaticCasaPortProgress(photo.update.work_done)
+                                      ? photo.update.work_done
+                                      : null) ||
+                                    "Photo d’avancement"}
                                 </p>
                               </figcaption>
                             </figure>
@@ -1411,8 +1445,8 @@ function SegmentedProgressBar({
       role="img"
       aria-label={`Avancement ${safeCurrent}%, dont gain de période ${safeGain}%`}
     >
-      <span className="h-full bg-blue-500" style={{ width: `${acquiredWidth}%` }} />
-      <span className="h-full bg-emerald-400" style={{ width: `${safeGain}%` }} />
+      <span className="h-full bg-emerald-600" style={{ width: `${acquiredWidth}%` }} />
+      <span className="h-full bg-emerald-300" style={{ width: `${safeGain}%` }} />
     </div>
   );
 }

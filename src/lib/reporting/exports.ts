@@ -43,6 +43,7 @@ export type ExportPhoto = {
 
 export type ReportExportData = {
   showOncfLogo: boolean;
+  showAvanzitLogo: boolean;
   reportTitle: string;
   periodTitle: string;
   periodRange: string;
@@ -386,6 +387,8 @@ export async function downloadReportWord(
   const navy = "0F2747";
   const blue = "2563EB";
   const green = "10B981";
+  const progressBase = "059669";
+  const progressGain = "6EE7B7";
   const track = "E2E8F0";
   const paleBlue = "EAF2FA";
   const border = { style: BorderStyle.SINGLE, size: 1, color: "D8E1EA" };
@@ -472,8 +475,8 @@ export async function downloadReportWord(
     const acquired = Math.max(0, safeCurrent - safeGain);
     const remaining = Math.max(0, 100 - safeCurrent);
     const segments = [
-      { value: acquired, color: blue },
-      { value: safeGain, color: green },
+      { value: acquired, color: progressBase },
+      { value: safeGain, color: progressGain },
       { value: remaining, color: track },
     ].filter((segment) => segment.value > 0);
 
@@ -561,7 +564,7 @@ export async function downloadReportWord(
               shading: { fill: red, type: ShadingType.CLEAR },
               margins: { top: 160, bottom: 160, left: 100, right: 100 },
             }),
-            brandCell("AVANZIT"),
+            brandCell(data.showAvanzitLogo ? "AVANZIT" : ""),
           ],
         }),
       ],
@@ -887,8 +890,9 @@ export async function downloadReportWord(
                         children: [
                           new TextRun({
                             text: task.measurement,
-                            color: "475569",
-                            size: 14,
+                            color: progressBase,
+                            bold: true,
+                            size: 17,
                           }),
                         ],
                       }),
@@ -905,14 +909,14 @@ export async function downloadReportWord(
                           new TextRun({
                             text: `${task.currentProgress}%`,
                             bold: true,
-                            color: blue,
-                            size: 18,
+                            color: progressBase,
+                            size: 22,
                           }),
                           new TextRun({
                             text: `   +${task.periodIncrease}%`,
                             bold: true,
                             color: green,
-                            size: 17,
+                            size: 19,
                           }),
                         ],
                       }),

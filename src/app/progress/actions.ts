@@ -389,9 +389,6 @@ export async function applyCasaportProgressImport(
       const externalKey = `casaport:${activity.key}:${task.key}`;
       const savedTask = refreshedByKey.get(externalKey);
       if (!savedTask) continue;
-      const quantitySummary = savedTask.target_quantity
-        ? `${Number(savedTask.completed_quantity)} / ${Number(savedTask.target_quantity)} ${savedTask.progress_unit}`
-        : `${Number(savedTask.progress)}%`;
       const existingUpdate = await supabase
         .from("task_progress_updates")
         .select("id")
@@ -415,7 +412,7 @@ export async function applyCasaportProgressImport(
         completed_quantity: savedTask.target_quantity
           ? Number(savedTask.completed_quantity)
           : null,
-        work_done: `Relevé d’avancement Casa-Port : ${quantitySummary}.`,
+        work_done: null,
         ongoing_work: null,
         comment: `Import automatique depuis ${data.fileName}`,
         source: "casaport_pdf",

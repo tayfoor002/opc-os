@@ -96,6 +96,8 @@ export async function downloadReportPdf(
   const navy: [number, number, number] = [15, 39, 71];
   const blue: [number, number, number] = [0, 80, 164];
   const green: [number, number, number] = [16, 185, 129];
+  const progressGreen: [number, number, number] = [5, 150, 105];
+  const progressGain: [number, number, number] = [110, 231, 183];
   const slate: [number, number, number] = [71, 85, 105];
   const pale: [number, number, number] = [234, 242, 250];
   const border: [number, number, number] = [216, 225, 234];
@@ -146,7 +148,10 @@ export async function downloadReportPdf(
     } else {
       pdf.text("ALSTOM", margin, 13);
     }
-    pdf.text("AVANZIT", pageWidth - margin, 13, { align: "right" });
+    if (data.showAvanzitLogo) {
+      pdf.setFontSize(19);
+      pdf.text("AVANZIT", pageWidth - margin, 15, { align: "right" });
+    }
     y = 31;
   };
 
@@ -222,11 +227,11 @@ export async function downloadReportPdf(
     pdf.setFillColor(226, 232, 240);
     pdf.roundedRect(x, barY, width, height, height / 2, height / 2, "F");
     if (acquired > 0) {
-      pdf.setFillColor(...blue);
+      pdf.setFillColor(...progressGreen);
       pdf.rect(x, barY, (width * acquired) / 100, height, "F");
     }
     if (safeGain > 0) {
-      pdf.setFillColor(...green);
+      pdf.setFillColor(...progressGain);
       pdf.rect(
         x + (width * acquired) / 100,
         barY,
@@ -510,8 +515,9 @@ export async function downloadReportPdf(
         margin + 3,
         y + 8.2,
       );
-      pdf.setTextColor(...slate);
-      pdf.setFontSize(5.8);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(...progressGreen);
+      pdf.setFontSize(7.2);
       pdf.text(
         (pdf.splitTextToSize(task.measurement, 74) as string[])[0],
         margin + 3,
@@ -527,8 +533,8 @@ export async function downloadReportPdf(
         task.periodIncrease,
       );
       pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(...blue);
-      pdf.setFontSize(8);
+      pdf.setTextColor(...progressGreen);
+      pdf.setFontSize(9.5);
       pdf.text(`${task.currentProgress}%`, pageWidth - margin - 19, y + 5.5, {
         align: "right",
       });
@@ -562,7 +568,7 @@ export async function downloadReportPdf(
             const x = margin + 6 + offset * (stepWidth + stepGap);
             pdf.setFont("helvetica", "normal");
             pdf.setTextColor(...slate);
-            pdf.setFontSize(5.8);
+            pdf.setFontSize(6.5);
             pdf.text(
               (pdf.splitTextToSize(step.label, stepWidth * 0.47) as string[])[0],
               x,
@@ -578,7 +584,8 @@ export async function downloadReportPdf(
               0,
             );
             pdf.setFont("helvetica", "bold");
-            pdf.setTextColor(...blue);
+            pdf.setTextColor(...progressGreen);
+            pdf.setFontSize(7);
             pdf.text(`${step.progress}%`, x + stepWidth, y + 3.4, {
               align: "right",
             });
