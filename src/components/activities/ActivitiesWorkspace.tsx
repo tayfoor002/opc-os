@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CalendarDays, CheckCircle2, CirclePlus, Edit3, FileText, Loader2, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, CalendarDays, CheckCircle2, CirclePlus, Edit3, FileText, FileUp, Loader2, Search, Trash2, X } from "lucide-react";
 import { ActivityDetailsDrawer } from "@/components/planning/ActivityDetailsDrawer";
+import { CasaportProgressWorkspace } from "@/components/progress/CasaportProgressWorkspace";
 import { ConfirmDeleteDialog } from "@/components/ui/ConfirmDeleteDialog";
 import { createClient } from "@/lib/supabase/client";
 import type { Activity, ActivityFormValues, ActivityStatus } from "@/types/activity";
@@ -17,6 +18,15 @@ const emptyForm: ActivityFormValues = {
 const statusLabels: Record<ActivityStatus, string> = {
   not_started: "Non démarrée", in_progress: "En cours", blocked: "Bloquée", completed: "Terminée",
 };
+
+const casaportActivityTemplates = [
+  { code: "CP-01", name: "Bâtiments (Génie civil)" },
+  { code: "CP-02", name: "Artères de câbles" },
+  { code: "CP-03", name: "Massifs" },
+  { code: "CP-04", name: "Mâts, potences et portiques" },
+  { code: "CP-05", name: "Campagne (installations sol)" },
+  { code: "CP-06", name: "Postes techniques (équipements intérieurs)" },
+] as const;
 
 export function ActivitiesWorkspace() {
   const supabase = useMemo(() => createClient(), []);
@@ -39,6 +49,7 @@ export function ActivitiesWorkspace() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
+  const [showPdfImport, setShowPdfImport] = useState(false);
   const [editing, setEditing] = useState<Activity | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [activityToDelete, setActivityToDelete] = useState<Activity | null>(null);
@@ -199,6 +210,31 @@ export function ActivitiesWorkspace() {
     ?? activity.zone;
 
   function openCreate() { setEditing(null); setForm(emptyForm); setOpen(true); }
+  function applyCasaportTemplate(code: string) {
+    const template = casaportActivityTemplates.find((item) => item.code === code);
+    if (!template) return;
+    const casaZone = zones.find(
+      (zone) => zone.code === "Z1" || zone.name.toLowerCase().includes("casa"),
+    );
+    const phaseOne = phases.find(
+      (phase) => phase.zone_id === casaZone?.id && phase.code === "PH1",
+    );
+    const casaPort = zoneElements.find(
+      (element) =>
+        element.zone_id === casaZone?.id &&
+        (element.code === "CASA-PORT" ||
+          element.name.toLowerCase().replaceAll("-", " ").includes("casa port")),
+    );
+    setForm((current) => ({
+      ...current,
+      code: template.code,
+      name: template.name,
+      zone_id: casaZone?.id ?? current.zone_id,
+      phase_id: phaseOne?.id ?? "",
+      zone_element_id: casaPort?.id ?? "",
+      zone: casaPort?.name ?? casaZone?.name ?? current.zone,
+    }));
+  }
   function openEdit(activity: Activity) {
     setEditing(activity);
     setForm({
@@ -281,10 +317,21 @@ export function ActivitiesWorkspace() {
           <p className="mt-2 text-base font-bold text-[var(--opc-blue)]">Programme de développement - Génie Civil, Installation & VT</p>
           <p className="mt-2 text-sm text-[var(--opc-muted)]">Créer, modifier, suivre et clôturer les activités réelles du projet PDD.</p>
         </div>
-        <button type="button" onClick={openCreate} className="flex items-center justify-center gap-2 rounded-xl bg-[var(--opc-red)] px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-[var(--opc-red-dark)]">
-          <CirclePlus className="h-4 w-4" /> Nouvelle activité
-        </button>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button type="button" onClick={() => setShowPdfImport((current) => !current)} className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-5 py-3 text-sm font-black text-[var(--opc-blue)] shadow-sm hover:bg-blue-100">
+            <FileUp className="h-4 w-4" /> {showPdfImport ? "Masquer l’import PDF" : "Importer le PDF Casa-Port"}
+          </button>
+          <button type="button" onClick={openCreate} className="flex items-center justify-center gap-2 rounded-xl bg-[var(--opc-red)] px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-[var(--opc-red-dark)]">
+            <CirclePlus className="h-4 w-4" /> Nouvelle activité
+          </button>
+        </div>
       </div>
+
+      {showPdfImport ? (
+        <section className="mt-6 rounded-3xl border-2 border-blue-200 bg-blue-50/30 p-4 shadow-sm sm:p-6">
+          <CasaportProgressWorkspace />
+        </section>
+      ) : null}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="Activités totales" value={String(stats.total)} />
@@ -406,6 +453,27 @@ export function ActivitiesWorkspace() {
             </div>
             <form onSubmit={saveActivity} className="p-6">
               <div className="grid gap-5 md:grid-cols-2">
+                {!editing ? (
+                  <div className="md:col-span-2">
+                    <Field label="Titre prédéfini du rapport Casa-Port">
+                      <select
+                        value={casaportActivityTemplates.some((item) => item.code === form.code) ? form.code : ""}
+                        onChange={(event) => applyCasaportTemplate(event.target.value)}
+                        className="input"
+                      >
+                        <option value="">Activité personnalisée — saisie libre</option>
+                        {casaportActivityTemplates.map((template) => (
+                          <option key={template.code} value={template.code}>
+                            {template.code} — {template.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <p className="mt-2 text-xs font-semibold text-slate-500">
+                      Le choix remplit automatiquement le code, le titre, la Zone Casa, la Phase 1 et Casa-Port. Vous pouvez encore modifier les champs avant la création.
+                    </p>
+                  </div>
+                ) : null}
                 <Field label="Code"><input required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="ACT-006" className="input" /></Field>
                 <Field label="Nom de l'activité"><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Pose de portique" className="input" /></Field>
                 <Field label="Zone">

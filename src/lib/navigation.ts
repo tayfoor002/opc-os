@@ -24,7 +24,7 @@ export const navigationItems = [
   { label: "Meetings", icon: ClipboardList, href: "/meetings" },
   { label: "Materials", icon: Package, href: "/materials" },
   { label: "Quality", icon: ShieldCheck, href: "/quality" },
-  { label: "Progress", icon: TrendingUp, href: "/progress" },
+  { label: "Import PDF / Avancement", icon: TrendingUp, href: "/progress" },
   { label: "Reporting", icon: ChartNoAxesCombined, href: "/reporting" },
   { label: "Organization", icon: Users, href: "/organization" },
   { label: "AI Assistant", icon: Bot, href: "/ai" },
