@@ -124,11 +124,32 @@ function addDays(value: string, days: number) {
   return isoDate(date);
 }
 
+function periodLimits(type: ReportType) {
+  if (type === "daily") return { minDays: 1, maxDays: 2 };
+  if (type === "weekly") return { minDays: 7, maxDays: 10 };
+  return { minDays: 30, maxDays: 30 };
+}
+
+function clampPeriodEnd(type: ReportType, start: string, end: string) {
+  const { minDays, maxDays } = periodLimits(type);
+  const minimumEnd = addDays(start, minDays - 1);
+  const maximumEnd = addDays(start, maxDays - 1);
+  if (end < minimumEnd) return minimumEnd;
+  if (end > maximumEnd) return maximumEnd;
+  return end;
+}
+
+function periodDayCount(start: string, end: string) {
+  const startDate = new Date(`${start}T12:00:00`);
+  const endDate = new Date(`${end}T12:00:00`);
+  return Math.round((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1;
+}
+
 function defaultPeriod(type: ReportType, reference: string) {
-  if (type === "daily") return { start: reference, end: reference };
+  const { minDays } = periodLimits(type);
   return {
     start: reference,
-    end: addDays(reference, type === "weekly" ? 6 : 29),
+    end: addDays(reference, minDays - 1),
   };
 }
 
@@ -140,7 +161,8 @@ function periodSubtitle(type: ReportType, start: string, end: string) {
     month: "long",
     year: "numeric",
   });
-  if (type === "daily") {
+  const duration = periodDayCount(start, end);
+  if (type === "daily" && duration === 1) {
     return new Intl.DateTimeFormat("fr-FR", {
       weekday: "long",
       day: "2-digit",
@@ -148,8 +170,7 @@ function periodSubtitle(type: ReportType, start: string, end: string) {
       year: "numeric",
     }).format(startDate);
   }
-  const duration = type === "weekly" ? "7 jours" : "30 jours";
-  return `Du ${formatter.format(startDate)} au ${formatter.format(endDate)} (${duration})`;
+  return `Du ${formatter.format(startDate)} au ${formatter.format(endDate)} (${duration} jours)`;
 }
 
 export function ReportingWorkspace() {
@@ -839,17 +860,12 @@ export function ReportingWorkspace() {
   function changePeriodStart(value: string) {
     if (!value) return;
     setPeriodStart(value);
-    setPeriodEnd(
-      type === "daily" ? value : addDays(value, type === "weekly" ? 6 : 29),
-    );
+    setPeriodEnd(clampPeriodEnd(type, value, periodEnd));
   }
 
   function changePeriodEnd(value: string) {
     if (!value) return;
-    setPeriodEnd(value);
-    setPeriodStart(
-      type === "daily" ? value : addDays(value, type === "weekly" ? -6 : -29),
-    );
+    setPeriodEnd(clampPeriodEnd(type, periodStart, value));
   }
 
   function toggleZone(zoneId: string) {
@@ -937,18 +953,23 @@ export function ReportingWorkspace() {
         </label>
         <label className="block">
           <span className="text-xs font-black uppercase text-slate-500">
-            {type === "daily" ? "Date du rapport" : "Date de début"}
+            Date de début
           </span>
           <input type="date" value={periodStart} onChange={(event) => changePeriodStart(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] px-3 py-3 text-sm font-bold" />
         </label>
-        {type !== "daily" ? (
-          <label className="block">
-            <span className="text-xs font-black uppercase text-slate-500">
-              Date de fin ({type === "weekly" ? "7 jours" : "30 jours"})
-            </span>
-            <input type="date" value={periodEnd} onChange={(event) => changePeriodEnd(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] px-3 py-3 text-sm font-bold" />
-          </label>
-        ) : null}
+        <label className="block">
+          <span className="text-xs font-black uppercase text-slate-500">
+            Date de fin ({type === "daily" ? "1 à 2 jours" : type === "weekly" ? "7 à 10 jours" : "30 jours"})
+          </span>
+          <input
+            type="date"
+            value={periodEnd}
+            min={addDays(periodStart, periodLimits(type).minDays - 1)}
+            max={addDays(periodStart, periodLimits(type).maxDays - 1)}
+            onChange={(event) => changePeriodEnd(event.target.value)}
+            className="mt-2 w-full rounded-xl border border-[var(--opc-border)] px-3 py-3 text-sm font-bold"
+          />
+        </label>
         <label className="block">
           <span className="text-xs font-black uppercase text-slate-500">Activité</span>
           <select value={activityFilter} onChange={(event) => setActivityFilter(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--opc-border)] bg-white px-3 py-3 text-sm font-bold">
