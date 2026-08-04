@@ -1344,7 +1344,7 @@ export async function downloadMonthlyProgressPptx(
 
 export async function downloadMonthlyExecutivePptx(
   sourceData: ReportExportData,
-  fileName = "synthese-executive-mensuelle-pdd-3-slides.pptx",
+  fileName = "synthese-executive-mensuelle-pdd-4-slides-plus-garde.pptx",
 ) {
   const data = normalizeMonthlyPresentationData(sourceData);
   const pptxLibrary = await import("pptxgenjs");
@@ -1385,12 +1385,12 @@ export async function downloadMonthlyExecutivePptx(
   const keyPhotos: ExportPhoto[] = [];
   const selectedActivities = new Set<string>();
   rankedPhotos.forEach((photo) => {
-    if (keyPhotos.length >= 2 || selectedActivities.has(photo.activity)) return;
+    if (keyPhotos.length >= 4 || selectedActivities.has(photo.activity)) return;
     keyPhotos.push(photo);
     selectedActivities.add(photo.activity);
   });
   rankedPhotos.forEach((photo) => {
-    if (keyPhotos.length >= 2 || keyPhotos.includes(photo)) return;
+    if (keyPhotos.length >= 4 || keyPhotos.includes(photo)) return;
     keyPhotos.push(photo);
   });
 
@@ -1797,70 +1797,227 @@ export async function downloadMonthlyExecutivePptx(
   const priorities = pptx.addSlide();
   addChrome(
     priorities,
-    data.blockers.length ? "Sécuriser le prochain cycle" : "Engager le prochain cycle",
-    "Terrain et décisions",
+    "Les décisions clés du prochain cycle",
+    "Pilotage opérationnel",
     4,
     alstomLogo,
     oncfLogo,
   );
-  keyPhotos.forEach((photo, index) => {
-    const x = MARGIN + index * 6.15;
-    priorities.addShape("rect", {
+  const decisionGroups = [
+    {
+      title: "TRAVAUX EN COURS",
+      items: data.ongoingWork,
+      fallback: "Aucun travail en cours renseigné.",
+      color: COLORS.blue,
+    },
+    {
+      title: "POINTS DE VIGILANCE",
+      items: data.blockers,
+      fallback: "Aucun blocage majeur déclaré.",
+      color: data.blockers.length ? COLORS.red : COLORS.green,
+    },
+    {
+      title: "PROCHAINES ÉTAPES",
+      items: data.nextSteps,
+      fallback: "Poursuivre les activités planifiées.",
+      color: COLORS.green,
+    },
+  ];
+  decisionGroups.forEach((group, column) => {
+    const x = MARGIN + column * 4.1;
+    priorities.addShape("line", {
       x,
-      y: 1.48,
+      y: 1.55,
+      w: 3.55,
+      h: 0,
+      line: { color: group.color, width: 3 },
+    });
+    priorities.addText(group.title, {
+      x,
+      y: 1.77,
+      w: 3.55,
+      h: 0.28,
+      fontFace: "Arial",
+      fontSize: 13,
+      bold: true,
+      color: group.color,
+      margin: 0,
+      fit: "shrink",
+    });
+    (group.items.length ? group.items : [group.fallback])
+      .slice(0, 3)
+      .forEach((item, index) => {
+        const y = 2.28 + index * 0.98;
+        priorities.addText(String(index + 1).padStart(2, "0"), {
+          x,
+          y,
+          w: 0.42,
+          h: 0.25,
+          fontFace: "Arial",
+          fontSize: 11,
+          bold: true,
+          color: group.color,
+          margin: 0,
+        });
+        priorities.addText(summarizeDescription(item, 95), {
+          x: x + 0.52,
+          y: y - 0.02,
+          w: 3.03,
+          h: 0.65,
+          fontFace: "Arial",
+          fontSize: 12,
+          bold: index === 0,
+          color: COLORS.ink,
+          margin: 0,
+          fit: "shrink",
+        });
+      });
+  });
+  priorities.addShape("line", {
+    x: MARGIN,
+    y: 5.45,
+    w: 12.16,
+    h: 0,
+    line: { color: COLORS.line, width: 1 },
+  });
+  const resources = [...data.resources.machines, ...data.resources.equipment];
+  priorities.addText("MOYENS MOBILISÉS", {
+    x: MARGIN,
+    y: 5.72,
+    w: 2.3,
+    h: 0.22,
+    fontFace: "Arial",
+    fontSize: 10,
+    bold: true,
+    charSpacing: 1,
+    color: COLORS.red,
+    margin: 0,
+  });
+  priorities.addText(
+    resources.length ? compactText(resources.join(" · "), 140) : "Aucun engin ou équipement renseigné.",
+    {
+      x: MARGIN,
+      y: 6.04,
+      w: 7.1,
+      h: 0.48,
+      fontFace: "Arial",
+      fontSize: 13,
+      bold: true,
+      color: COLORS.ink,
+      margin: 0,
+      fit: "shrink",
+    },
+  );
+  priorities.addText("PÉRIMÈTRE CONSOLIDÉ", {
+    x: 8.15,
+    y: 5.72,
+    w: 2.5,
+    h: 0.22,
+    fontFace: "Arial",
+    fontSize: 10,
+    bold: true,
+    charSpacing: 1,
+    color: COLORS.blue,
+    margin: 0,
+  });
+  priorities.addText(
+    `${data.activities.length} activités · ${data.activities.reduce((total, activity) => total + activity.tasks.length, 0)} tâches · ${data.metrics.updates} mises à jour`,
+    {
+      x: 8.15,
+      y: 6.04,
+      w: 4.58,
+      h: 0.48,
+      fontFace: "Arial",
+      fontSize: 13,
+      bold: true,
+      color: COLORS.ink,
+      margin: 0,
+      fit: "shrink",
+    },
+  );
+
+  const photos = pptx.addSlide();
+  addChrome(
+    photos,
+    "Photos terrain de la période",
+    "Photos et commentaires",
+    5,
+    alstomLogo,
+    oncfLogo,
+  );
+  keyPhotos.forEach((photo, index) => {
+    const column = index % 2;
+    const row = Math.floor(index / 2);
+    const x = MARGIN + column * 6.15;
+    const y = 1.45 + row * 2.78;
+    photos.addShape("rect", {
+      x,
+      y,
       w: 5.86,
-      h: 2.12,
+      h: 1.82,
       line: { color: COLORS.line, width: 0.8 },
       fill: { color: COLORS.pale },
     });
     if (photoData[index]) {
-      priorities.addImage({
+      photos.addImage({
         data: photoData[index],
         x,
-        y: 1.48,
+        y,
         w: 5.86,
-        h: 2.12,
-        sizing: { type: "cover", w: 5.86, h: 2.12 },
+        h: 1.82,
+        sizing: { type: "cover", w: 5.86, h: 1.82 },
         altText: photo.caption || photo.task,
       });
     }
-    priorities.addShape("rect", {
+    photos.addShape("rect", {
       x,
-      y: 2.93,
+      y: y + 1.34,
       w: 5.86,
-      h: 0.68,
+      h: 0.48,
       line: { color: COLORS.navy, transparency: 100 },
       fill: { color: COLORS.navy, transparency: 6 },
     });
-    priorities.addText(compactText(photo.activity, 48), {
-      x: x + 0.18,
-      y: 3.04,
-      w: 5.5,
-      h: 0.24,
+    photos.addText(compactText(`${photo.activity} · ${photo.task}`, 72), {
+      x: x + 0.16,
+      y: y + 1.44,
+      w: 4.66,
+      h: 0.2,
       fontFace: "Arial",
-      fontSize: 13,
+      fontSize: 11.5,
       bold: true,
       color: COLORS.white,
       margin: 0,
       fit: "shrink",
     });
-    priorities.addText(summarizeDescription(photo.caption, 105), {
-      x,
-      y: 3.78,
-      w: 5.86,
-      h: 0.54,
+    photos.addText(photo.date, {
+      x: x + 4.92,
+      y: y + 1.44,
+      w: 0.78,
+      h: 0.18,
       fontFace: "Arial",
-      fontSize: 12,
+      fontSize: 8.5,
+      bold: true,
+      color: COLORS.white,
+      align: "right",
+      margin: 0,
+    });
+    photos.addText(summarizeDescription(photo.caption, 112), {
+      x,
+      y: y + 1.98,
+      w: 5.86,
+      h: 0.48,
+      fontFace: "Arial",
+      fontSize: 11.5,
       color: COLORS.slate,
       margin: 0,
       fit: "shrink",
     });
   });
   if (!keyPhotos.length) {
-    priorities.addText("Aucune photo terrain n’est disponible sur la période sélectionnée.", {
+    photos.addText("Aucune photo terrain n’est disponible sur la période sélectionnée.", {
       x: MARGIN,
-      y: 2.2,
-      w: 12.1,
+      y: 3.15,
+      w: 12.16,
       h: 0.5,
       fontFace: "Arial",
       fontSize: 20,
@@ -1870,73 +2027,6 @@ export async function downloadMonthlyExecutivePptx(
       margin: 0,
     });
   }
-  priorities.addShape("line", {
-    x: MARGIN,
-    y: 4.62,
-    w: 12.16,
-    h: 0,
-    line: { color: COLORS.line, width: 1 },
-  });
-  priorities.addText("POINT DE VIGILANCE", {
-    x: MARGIN,
-    y: 4.94,
-    w: 2.7,
-    h: 0.23,
-    fontFace: "Arial",
-    fontSize: 11,
-    bold: true,
-    charSpacing: 1,
-    color: data.blockers.length ? COLORS.red : COLORS.green,
-    margin: 0,
-  });
-  priorities.addText(
-    summarizeDescription(
-      data.blockers[0] || "Aucun blocage majeur n’est déclaré sur la période.",
-      150,
-    ),
-    {
-      x: MARGIN,
-      y: 5.28,
-      w: 5.6,
-      h: 0.72,
-      fontFace: "Arial",
-      fontSize: 16,
-      bold: true,
-      color: COLORS.ink,
-      margin: 0,
-      fit: "shrink",
-    },
-  );
-  priorities.addText("PROCHAIN JALON", {
-    x: 6.86,
-    y: 4.94,
-    w: 2.4,
-    h: 0.23,
-    fontFace: "Arial",
-    fontSize: 11,
-    bold: true,
-    charSpacing: 1,
-    color: COLORS.blue,
-    margin: 0,
-  });
-  priorities.addText(
-    summarizeDescription(
-      data.nextSteps[0] || "Poursuivre les activités planifiées et consolider les mises à jour terrain.",
-      150,
-    ),
-    {
-      x: 6.86,
-      y: 5.28,
-      w: 5.88,
-      h: 0.72,
-      fontFace: "Arial",
-      fontSize: 16,
-      bold: true,
-      color: COLORS.ink,
-      margin: 0,
-      fit: "shrink",
-    },
-  );
 
   await pptx.writeFile({ fileName, compression: true });
 }
