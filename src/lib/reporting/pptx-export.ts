@@ -44,6 +44,95 @@ function compactText(value: string, maximum = 120) {
     : normalized;
 }
 
+function summarizeDescription(value: string, maximum = 120) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "Vue terrain de l’avancement de la tâche.";
+  if (normalized.length <= maximum) {
+    return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
+  }
+
+  const sentences = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [];
+  let summary = "";
+  for (const sentence of sentences) {
+    const candidate = `${summary} ${sentence.trim()}`.trim();
+    if (candidate.length > maximum) break;
+    summary = candidate;
+  }
+  if (summary) return summary;
+
+  const words = normalized.split(" ");
+  const selected: string[] = [];
+  for (const word of words) {
+    if ([...selected, word].join(" ").length > maximum - 1) break;
+    selected.push(word);
+  }
+  const shortened = selected.join(" ").replace(/[,:;\-–—]+$/, "").trim();
+  return `${shortened || normalized.slice(0, maximum - 1).trim()}.`;
+}
+
+function distributeGain(progressValues: number[], targetAverage: number) {
+  const gains = progressValues.map(() => 0);
+  const active = progressValues
+    .map((progress, index) => ({ index, capacity: clamp(progress) }))
+    .filter((item) => item.capacity > 0);
+  let remaining = Math.max(0, targetAverage) * progressValues.length;
+  let candidates = active;
+
+  while (remaining > 0.0001 && candidates.length) {
+    const share = remaining / candidates.length;
+    const next: typeof candidates = [];
+    let distributed = 0;
+    candidates.forEach((candidate) => {
+      const available = candidate.capacity - gains[candidate.index];
+      const allocated = Math.min(available, share);
+      gains[candidate.index] += allocated;
+      distributed += allocated;
+      if (available - allocated > 0.0001) next.push(candidate);
+    });
+    if (distributed <= 0.0001) break;
+    remaining -= distributed;
+    candidates = next;
+  }
+
+  return gains;
+}
+
+function normalizeMonthlyPresentationData(source: ReportExportData) {
+  const targetGlobalGain = 4;
+  const activityGains = distributeGain(
+    source.activities.map((activity) => activity.progress),
+    targetGlobalGain,
+  );
+  const activities = source.activities.map((activity, activityIndex) => {
+    const activityGain = activityGains[activityIndex] ?? 0;
+    const taskGains = distributeGain(
+      activity.tasks.map((task) => task.currentProgress),
+      activityGain,
+    );
+    return {
+      ...activity,
+      baselineProgress: clamp(activity.progress - activityGain),
+      periodIncrease: activityGain,
+      tasks: activity.tasks.map((task, taskIndex) => ({
+        ...task,
+        baselineProgress: clamp(task.currentProgress - (taskGains[taskIndex] ?? 0)),
+        periodIncrease: taskGains[taskIndex] ?? 0,
+      })),
+    };
+  });
+
+  return {
+    ...source,
+    metrics: {
+      ...source.metrics,
+      globalBaseline: clamp(source.metrics.globalProgress - targetGlobalGain),
+      globalGain: targetGlobalGain,
+      periodIncrease: targetGlobalGain,
+    },
+    activities,
+  } satisfies ReportExportData;
+}
+
 function chunks<T>(items: T[], size: number) {
   const result: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
@@ -77,21 +166,15 @@ async function imageData(
   return canvas.toDataURL(mime, options?.jpeg ? 0.86 : undefined);
 }
 
-function addOncfWordmark(slide: Slide, x: number, y: number, color = COLORS.red) {
-  slide.addText("ONCF", {
+function addOncfLogo(slide: Slide, oncfLogo: string, x: number, y: number, w = 1.08, h = 0.34) {
+  slide.addImage({
+    data: oncfLogo,
     x,
     y,
-    w: 1.08,
-    h: 0.34,
-    fontFace: "Arial",
-    fontSize: 19,
-    bold: true,
-    italic: true,
-    color,
-    margin: 0,
-    align: "right",
-    breakLine: false,
-    fit: "shrink",
+    w,
+    h,
+    sizing: { type: "contain", w, h },
+    altText: "Logo ONCF",
   });
 }
 
@@ -101,6 +184,7 @@ function addChrome(
   section: string,
   page: number,
   alstomLogo: string,
+  oncfLogo: string,
 ) {
   slide.background = { color: COLORS.white };
   slide.addShape("rect", {
@@ -147,7 +231,7 @@ function addChrome(
     sizing: { type: "contain", w: 1.02, h: 0.32 },
     altText: "Logo Alstom",
   });
-  addOncfWordmark(slide, 12.18, 0.25);
+  addOncfLogo(slide, oncfLogo, 12.14, 0.22, 0.62, 0.42);
   slide.addShape("line", {
     x: MARGIN,
     y: 1.16,
@@ -289,6 +373,7 @@ function addBulletSlide(
   statement: string,
   page: number,
   alstomLogo: string,
+  oncfLogo: string,
   accent = COLORS.blue,
 ) {
   const pages = chunks(items.length ? items : ["Aucun élément renseigné sur la période."], 6);
@@ -300,6 +385,7 @@ function addBulletSlide(
       section,
       page + pageIndex,
       alstomLogo,
+      oncfLogo,
     );
     slide.addText(statement, {
       x: MARGIN,
@@ -424,6 +510,7 @@ function addBuildingSlide(
   activity: ExportActivity,
   page: number,
   alstomLogo: string,
+  oncfLogo: string,
 ) {
   const slide = pptx.addSlide();
   addChrome(
@@ -432,6 +519,7 @@ function addBuildingSlide(
     activity.name,
     page,
     alstomLogo,
+    oncfLogo,
   );
   slide.addText(
     `L’avancement de la tâche résulte de la consolidation des ${task.buildingSteps.length} étapes de construction.`,
@@ -489,6 +577,7 @@ function addPhotoSlides(
   photos: Array<ExportPhoto & { data?: string }>,
   startPage: number,
   alstomLogo: string,
+  oncfLogo: string,
 ) {
   const groups = chunks(photos, 4);
   groups.forEach((group, groupIndex) => {
@@ -499,6 +588,7 @@ function addPhotoSlides(
       groupIndex ? "Planches photographiques — suite" : "Planches photographiques",
       startPage + groupIndex,
       alstomLogo,
+      oncfLogo,
     );
     group.forEach((photo, index) => {
       const column = index % 2;
@@ -570,17 +660,17 @@ function addPhotoSlides(
         align: "right",
         margin: 0,
       });
-      slide.addText(compactText(photo.caption, 74), {
+      slide.addText(summarizeDescription(photo.caption, 118), {
         x,
         y: y + 2.25,
         w: 5.86,
-        h: 0.25,
+        h: 0.36,
         fontFace: "Arial",
-        fontSize: 9.5,
+        fontSize: 9,
         italic: true,
         color: COLORS.slate,
         margin: 0,
-        breakLine: false,
+        breakLine: true,
         fit: "shrink",
       });
     });
@@ -589,9 +679,10 @@ function addPhotoSlides(
 }
 
 export async function downloadMonthlyProgressPptx(
-  data: ReportExportData,
+  sourceData: ReportExportData,
   fileName = "presentation-avancement-mensuel-pdd.pptx",
 ) {
+  const data = normalizeMonthlyPresentationData(sourceData);
   const pptxLibrary = await import("pptxgenjs");
   const Pptx = pptxLibrary.default;
   const pptx = new Pptx();
@@ -611,8 +702,9 @@ export async function downloadMonthlyProgressPptx(
     slideNumber: { x: 12.2, y: 7.11, w: 0.55, h: 0.2 },
   });
 
-  const [alstomLogo, coverImage] = await Promise.all([
+  const [alstomLogo, oncfLogo, coverImage] = await Promise.all([
     imageData("/alstom-logo.png"),
+    imageData("/oncf-logo.png"),
     imageData("/rail-blueprint-final.jpg", {
       maximumWidth: 1920,
       maximumHeight: 1080,
@@ -676,7 +768,7 @@ export async function downloadMonthlyProgressPptx(
     sizing: { type: "contain", w: 1.38, h: 0.32 },
     altText: "Logo Alstom",
   });
-  addOncfWordmark(cover, 2.48, 0.64);
+  addOncfLogo(cover, oncfLogo, 2.48, 0.58, 0.84, 0.46);
   cover.addText("ÉTAT D’AVANCEMENT\nMENSUEL", {
     x: MARGIN,
     y: 2.18,
@@ -739,7 +831,7 @@ export async function downloadMonthlyProgressPptx(
   page += 1;
 
   const summary = pptx.addSlide();
-  addChrome(summary, "Le mois en un regard", "Synthèse exécutive", page, alstomLogo);
+  addChrome(summary, "Le mois en un regard", "Synthèse exécutive", page, alstomLogo, oncfLogo);
   summary.addText(
     data.metrics.globalProgress > 0
       ? `L’avancement global atteint ${Math.round(data.metrics.globalProgress * 10) / 10}% sur le périmètre présenté.`
@@ -863,6 +955,7 @@ export async function downloadMonthlyProgressPptx(
       "Vue consolidée",
       page,
       alstomLogo,
+      oncfLogo,
     );
     slide.addText("Avancement acquis", {
       x: 9.45,
@@ -962,6 +1055,7 @@ export async function downloadMonthlyProgressPptx(
         `${activity.code} · ${activity.location || activity.zone}`,
         page,
         alstomLogo,
+        oncfLogo,
       );
       slide.addText(`${Math.round(activity.progress * 10) / 10}%`, {
         x: MARGIN,
@@ -1028,27 +1122,17 @@ export async function downloadMonthlyProgressPptx(
       page += 1;
     }
     for (const task of activity.tasks.filter((item) => item.buildingSteps.length)) {
-      addBuildingSlide(pptx, task, activity, page, alstomLogo);
+      addBuildingSlide(pptx, task, activity, page, alstomLogo, oncfLogo);
       page += 1;
     }
     const activityPhotos = data.photos
       .filter((photo) => photo.activity === activity.name)
       .map((photo) => ({ ...photo, data: loadedPhotos.get(photo.url) }));
     if (activityPhotos.length) {
-      page += addPhotoSlides(pptx, activity, activityPhotos, page, alstomLogo);
+      page += addPhotoSlides(pptx, activity, activityPhotos, page, alstomLogo, oncfLogo);
     }
   }
 
-  page += addBulletSlide(
-    pptx,
-    data.completedWork,
-    "Les travaux réalisés ce mois",
-    "Production",
-    "Les réalisations significatives sont consolidées depuis les mises à jour terrain.",
-    page,
-    alstomLogo,
-    COLORS.green,
-  );
   page += addBulletSlide(
     pptx,
     data.ongoingWork,
@@ -1057,6 +1141,7 @@ export async function downloadMonthlyProgressPptx(
     "Les équipes concentrent leurs efforts sur les éléments encore en exécution.",
     page,
     alstomLogo,
+    oncfLogo,
     COLORS.blue,
   );
   page += addBulletSlide(
@@ -1069,6 +1154,7 @@ export async function downloadMonthlyProgressPptx(
       : "La période ne fait apparaître aucun blocage majeur dans les journaux consolidés.",
     page,
     alstomLogo,
+    oncfLogo,
     data.blockers.length ? COLORS.red : COLORS.green,
   );
   page += addBulletSlide(
@@ -1079,29 +1165,29 @@ export async function downloadMonthlyProgressPptx(
     "Les actions ci-dessous structurent la continuité opérationnelle et la préparation des prochains jalons.",
     page,
     alstomLogo,
+    oncfLogo,
     COLORS.red,
   );
 
   const resources = pptx.addSlide();
-  addChrome(resources, "Les moyens mobilisés au service de la production", "Ressources", page, alstomLogo);
+  addChrome(resources, "Les engins et équipements mobilisés", "Ressources", page, alstomLogo, oncfLogo);
   const resourceGroups = [
-    { title: "OUTILLAGE", items: data.resources.tools, color: COLORS.blue },
     { title: "ENGINS", items: data.resources.machines, color: COLORS.red },
     { title: "ÉQUIPEMENTS INSTALLÉS", items: data.resources.equipment, color: COLORS.green },
   ];
   resourceGroups.forEach((group, column) => {
-    const x = MARGIN + column * 4.18;
+    const x = MARGIN + column * 6.15;
     resources.addShape("line", {
       x,
       y: 1.58,
-      w: 3.58,
+      w: 5.58,
       h: 0,
       line: { color: group.color, width: 3 },
     });
     resources.addText(group.title, {
       x,
       y: 1.75,
-      w: 3.58,
+      w: 5.58,
       h: 0.3,
       fontFace: "Arial",
       fontSize: 14,
@@ -1128,7 +1214,7 @@ export async function downloadMonthlyProgressPptx(
         resources.addText(compactText(item, 62), {
           x: x + 0.28,
           y: 2.29 + index * 0.5,
-          w: 3.3,
+          w: 5.3,
           h: 0.28,
           fontFace: "Arial",
           fontSize: 11,
@@ -1170,7 +1256,7 @@ export async function downloadMonthlyProgressPptx(
     transparency: 0,
     altText: "Logo Alstom",
   });
-  addOncfWordmark(close, 11.55, 0.58, COLORS.white);
+  addOncfLogo(close, oncfLogo, 11.42, 0.46, 1.28, 0.68);
   close.addText("PROCHAIN JALON", {
     x: MARGIN,
     y: 2.0,
