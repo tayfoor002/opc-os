@@ -1364,6 +1364,17 @@ export async function downloadMonthlyExecutivePptx(
   const activityScores = new Map(
     rankedActivities.map((activity, index) => [activity.name, rankedActivities.length - index]),
   );
+  const relevantTasks = data.activities
+    .flatMap((activity) =>
+      activity.tasks.map((task) => ({ task, activity })),
+    )
+    .sort(
+      (left, right) =>
+        Number(right.task.currentProgress > 0) - Number(left.task.currentProgress > 0) ||
+        right.task.periodIncrease - left.task.periodIncrease ||
+        right.task.currentProgress - left.task.currentProgress,
+    )
+    .slice(0, 4);
   const rankedPhotos = [...data.photos]
     .sort((left, right) => {
       const scoreDifference =
@@ -1654,12 +1665,141 @@ export async function downloadMonthlyExecutivePptx(
   addMetric(progress, 6.38, "À engager", String(data.metrics.notStarted), "tâches non démarrées", COLORS.muted);
   addMetric(progress, 9.28, "Alertes", String(data.blockers.length), "points à surveiller", data.blockers.length ? COLORS.red : COLORS.green);
 
+  const tasks = pptx.addSlide();
+  addChrome(
+    tasks,
+    "Les tâches qui portent l’avancement",
+    "Faits marquants",
+    3,
+    alstomLogo,
+    oncfLogo,
+  );
+  tasks.addText("Sélection fondée sur le gain mensuel et le niveau d’exécution.", {
+    x: MARGIN,
+    y: 1.4,
+    w: 8.8,
+    h: 0.32,
+    fontFace: "Arial",
+    fontSize: 16,
+    bold: true,
+    color: COLORS.blue,
+    margin: 0,
+    fit: "shrink",
+  });
+  (relevantTasks.length
+    ? relevantTasks
+    : [{
+        activity: { name: "Aucune activité renseignée" } as ExportActivity,
+        task: {
+          title: "Aucune tâche disponible sur la période",
+          workSummary: "Les prochaines mises à jour terrain alimenteront cette synthèse.",
+          realizedValue: "—",
+          objectiveValue: "—",
+          currentProgress: 0,
+          periodIncrease: 0,
+        } as ExportTask,
+      }]
+  ).forEach(({ task, activity }, index) => {
+    const y = 2.02 + index * 1.18;
+    tasks.addText(String(index + 1).padStart(2, "0"), {
+      x: MARGIN,
+      y,
+      w: 0.48,
+      h: 0.32,
+      fontFace: "Arial",
+      fontSize: 16,
+      bold: true,
+      color: COLORS.red,
+      margin: 0,
+    });
+    tasks.addText(compactText(task.title, 58), {
+      x: 1.28,
+      y,
+      w: 4.35,
+      h: 0.28,
+      fontFace: "Arial",
+      fontSize: 15,
+      bold: true,
+      color: COLORS.ink,
+      margin: 0,
+      fit: "shrink",
+    });
+    tasks.addText(compactText(activity.name, 45), {
+      x: 1.28,
+      y: y + 0.34,
+      w: 4.35,
+      h: 0.2,
+      fontFace: "Arial",
+      fontSize: 10,
+      bold: true,
+      color: COLORS.red,
+      margin: 0,
+      fit: "shrink",
+    });
+    tasks.addText(summarizeDescription(task.workSummary, 88), {
+      x: 1.28,
+      y: y + 0.61,
+      w: 4.35,
+      h: 0.3,
+      fontFace: "Arial",
+      fontSize: 10.5,
+      color: COLORS.slate,
+      margin: 0,
+      fit: "shrink",
+    });
+    tasks.addText(`${task.realizedValue} / ${task.objectiveValue}`, {
+      x: 5.92,
+      y,
+      w: 2.15,
+      h: 0.26,
+      fontFace: "Arial",
+      fontSize: 12,
+      bold: true,
+      color: COLORS.ink,
+      align: "right",
+      margin: 0,
+      fit: "shrink",
+    });
+    addProgressBar(tasks, 8.38, y + 0.05, 3.25, 0.18, task.currentProgress, task.periodIncrease);
+    tasks.addText(`${Math.round(task.currentProgress * 10) / 10}%`, {
+      x: 11.82,
+      y: y - 0.03,
+      w: 0.65,
+      h: 0.29,
+      fontFace: "Arial",
+      fontSize: 14,
+      bold: true,
+      color: COLORS.green,
+      align: "right",
+      margin: 0,
+    });
+    tasks.addText(`+${Math.round(task.periodIncrease * 10) / 10} pts ce mois`, {
+      x: 8.38,
+      y: y + 0.39,
+      w: 4.09,
+      h: 0.22,
+      fontFace: "Arial",
+      fontSize: 10.5,
+      bold: true,
+      color: COLORS.green,
+      align: "right",
+      margin: 0,
+    });
+    tasks.addShape("line", {
+      x: MARGIN,
+      y: y + 0.96,
+      w: 12.16,
+      h: 0,
+      line: { color: COLORS.line, width: 0.7 },
+    });
+  });
+
   const priorities = pptx.addSlide();
   addChrome(
     priorities,
     data.blockers.length ? "Sécuriser le prochain cycle" : "Engager le prochain cycle",
     "Terrain et décisions",
-    3,
+    4,
     alstomLogo,
     oncfLogo,
   );
@@ -1669,7 +1809,7 @@ export async function downloadMonthlyExecutivePptx(
       x,
       y: 1.48,
       w: 5.86,
-      h: 2.75,
+      h: 2.12,
       line: { color: COLORS.line, width: 0.8 },
       fill: { color: COLORS.pale },
     });
@@ -1679,14 +1819,14 @@ export async function downloadMonthlyExecutivePptx(
         x,
         y: 1.48,
         w: 5.86,
-        h: 2.75,
-        sizing: { type: "cover", w: 5.86, h: 2.75 },
+        h: 2.12,
+        sizing: { type: "cover", w: 5.86, h: 2.12 },
         altText: photo.caption || photo.task,
       });
     }
     priorities.addShape("rect", {
       x,
-      y: 3.55,
+      y: 2.93,
       w: 5.86,
       h: 0.68,
       line: { color: COLORS.navy, transparency: 100 },
@@ -1694,7 +1834,7 @@ export async function downloadMonthlyExecutivePptx(
     });
     priorities.addText(compactText(photo.activity, 48), {
       x: x + 0.18,
-      y: 3.65,
+      y: 3.04,
       w: 5.5,
       h: 0.24,
       fontFace: "Arial",
@@ -1706,7 +1846,7 @@ export async function downloadMonthlyExecutivePptx(
     });
     priorities.addText(summarizeDescription(photo.caption, 105), {
       x,
-      y: 4.4,
+      y: 3.78,
       w: 5.86,
       h: 0.54,
       fontFace: "Arial",
@@ -1719,7 +1859,7 @@ export async function downloadMonthlyExecutivePptx(
   if (!keyPhotos.length) {
     priorities.addText("Aucune photo terrain n’est disponible sur la période sélectionnée.", {
       x: MARGIN,
-      y: 2.42,
+      y: 2.2,
       w: 12.1,
       h: 0.5,
       fontFace: "Arial",
@@ -1732,14 +1872,14 @@ export async function downloadMonthlyExecutivePptx(
   }
   priorities.addShape("line", {
     x: MARGIN,
-    y: 5.28,
+    y: 4.62,
     w: 12.16,
     h: 0,
     line: { color: COLORS.line, width: 1 },
   });
   priorities.addText("POINT DE VIGILANCE", {
     x: MARGIN,
-    y: 5.58,
+    y: 4.94,
     w: 2.7,
     h: 0.23,
     fontFace: "Arial",
@@ -1756,7 +1896,7 @@ export async function downloadMonthlyExecutivePptx(
     ),
     {
       x: MARGIN,
-      y: 5.9,
+      y: 5.28,
       w: 5.6,
       h: 0.72,
       fontFace: "Arial",
@@ -1769,7 +1909,7 @@ export async function downloadMonthlyExecutivePptx(
   );
   priorities.addText("PROCHAIN JALON", {
     x: 6.86,
-    y: 5.58,
+    y: 4.94,
     w: 2.4,
     h: 0.23,
     fontFace: "Arial",
@@ -1786,7 +1926,7 @@ export async function downloadMonthlyExecutivePptx(
     ),
     {
       x: 6.86,
-      y: 5.9,
+      y: 5.28,
       w: 5.88,
       h: 0.72,
       fontFace: "Arial",

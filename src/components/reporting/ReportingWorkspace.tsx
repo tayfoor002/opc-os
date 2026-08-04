@@ -869,7 +869,7 @@ export function ReportingWorkspace() {
       if (summary) {
         await downloadMonthlyExecutivePptx(
           exportData,
-          `synthese-executive-pdd-3-slides-${period.start}-${period.end}.pptx`,
+          `synthese-executive-pdd-3-slides-plus-garde-${period.start}-${period.end}.pptx`,
         );
       } else {
         await downloadMonthlyProgressPptx(
@@ -992,11 +992,11 @@ export function ReportingWorkspace() {
             type="button"
             disabled={Boolean(exporting)}
             onClick={() => void exportPowerPoint(true)}
-            title={type === "monthly" ? "Générer une synthèse exécutive en 3 slides" : "Disponible avec le rapport mensuel"}
+            title={type === "monthly" ? "Générer une page de garde et trois slides de synthèse" : "Disponible avec le rapport mensuel"}
             className="flex items-center gap-2 rounded-xl border border-[#0b2748] bg-white px-4 py-3 text-sm font-black text-[#0b2748] shadow-sm disabled:opacity-60"
           >
             {exporting === "pptx-summary" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Presentation className="h-4 w-4" />}
-            Synthèse PPT · 3 slides
+            Synthèse PPT · 3 slides + garde
           </button>
         </div>
       </div>
