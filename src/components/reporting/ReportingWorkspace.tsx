@@ -11,6 +11,7 @@ import {
   FileDown,
   FileText,
   Loader2,
+  Presentation,
   RefreshCw,
 } from "lucide-react";
 
@@ -21,6 +22,7 @@ import {
   type ReportExportData,
 } from "@/lib/reporting/exports";
 import { downloadReportPdf } from "@/lib/reporting/pdf-export";
+import { downloadMonthlyProgressPptx } from "@/lib/reporting/pptx-export";
 import type { Activity } from "@/types/activity";
 import type {
   CollaboratorOption,
@@ -199,7 +201,7 @@ export function ReportingWorkspace() {
   const [showAvanzitLogo, setShowAvanzitLogo] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [exporting, setExporting] = useState<"pdf" | "word" | null>(null);
+  const [exporting, setExporting] = useState<"pdf" | "word" | "pptx" | null>(null);
 
   async function loadReporting() {
     setLoading(true);
@@ -850,6 +852,30 @@ export function ReportingWorkspace() {
     setExporting(null);
   }
 
+  async function exportPowerPoint() {
+    if (type !== "monthly") {
+      setError(
+        "La présentation client est basée sur le rapport mensuel. Sélectionnez « Rapport mensuel », puis choisissez la période à présenter.",
+      );
+      return;
+    }
+    setExporting("pptx");
+    setError("");
+    try {
+      await downloadMonthlyProgressPptx(
+        buildExportData(),
+        `presentation-avancement-mensuel-pdd-${period.start}-${period.end}.pptx`,
+      );
+    } catch (exportError) {
+      setError(
+        exportError instanceof Error
+          ? exportError.message
+          : "Impossible de générer la présentation PowerPoint.",
+      );
+    }
+    setExporting(null);
+  }
+
   function changeReportType(nextType: ReportType) {
     setType(nextType);
     const nextPeriod = defaultPeriod(nextType, periodStart);
@@ -940,6 +966,16 @@ export function ReportingWorkspace() {
           </button>
           <button type="button" disabled={Boolean(exporting)} onClick={() => void exportWord()} className="flex items-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 py-3 text-sm font-black text-white disabled:opacity-60">
             {exporting === "word" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />} Télécharger Word
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(exporting)}
+            onClick={() => void exportPowerPoint()}
+            title={type === "monthly" ? "Générer la présentation client mensuelle" : "Disponible avec le rapport mensuel"}
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#0b2748] to-[#0050a4] px-4 py-3 text-sm font-black text-white shadow-sm disabled:opacity-60"
+          >
+            {exporting === "pptx" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Presentation className="h-4 w-4" />}
+            Présentation PowerPoint
           </button>
         </div>
       </div>
