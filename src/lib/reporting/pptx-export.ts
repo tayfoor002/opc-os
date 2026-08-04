@@ -1373,8 +1373,7 @@ export async function downloadMonthlyExecutivePptx(
         Number(right.task.currentProgress > 0) - Number(left.task.currentProgress > 0) ||
         right.task.periodIncrease - left.task.periodIncrease ||
         right.task.currentProgress - left.task.currentProgress,
-    )
-    .slice(0, 4);
+    );
   const rankedPhotos = [...data.photos]
     .sort((left, right) => {
       const scoreDifference =
@@ -1608,7 +1607,7 @@ export async function downloadMonthlyExecutivePptx(
     align: "right",
     margin: 0,
   });
-  progress.addText("ACTIVITÉS LES PLUS SIGNIFICATIVES", {
+  progress.addText("AVANCEMENT DE TOUTES LES ACTIVITÉS", {
     x: MARGIN,
     y: 2.98,
     w: 4.4,
@@ -1620,13 +1619,18 @@ export async function downloadMonthlyExecutivePptx(
     color: COLORS.red,
     margin: 0,
   });
-  rankedActivities.slice(0, 4).forEach((activity, index) => {
-    const y = 3.48 + index * 0.64;
+  const activityRows = Math.max(1, Math.ceil(rankedActivities.length / 2));
+  const activityStep = Math.min(0.58, 2.18 / activityRows);
+  rankedActivities.forEach((activity, index) => {
+    const column = index % 2;
+    const row = Math.floor(index / 2);
+    const x = MARGIN + column * 6.15;
+    const y = 3.42 + row * activityStep;
     progress.addText(compactText(activity.name, 42), {
-      x: MARGIN,
+      x,
       y,
-      w: 4.05,
-      h: 0.27,
+      w: 2.25,
+      h: Math.min(0.27, activityStep),
       fontFace: "Arial",
       fontSize: 13,
       bold: true,
@@ -1634,9 +1638,9 @@ export async function downloadMonthlyExecutivePptx(
       margin: 0,
       fit: "shrink",
     });
-    addProgressBar(progress, 4.88, y + 0.05, 5.3, 0.17, activity.progress, activity.periodIncrease);
+    addProgressBar(progress, x + 2.42, y + 0.05, 2.55, 0.17, activity.progress, activity.periodIncrease);
     progress.addText(`${Math.round(activity.progress * 10) / 10}%`, {
-      x: 10.42,
+      x: x + 5.05,
       y: y - 0.02,
       w: 0.75,
       h: 0.28,
@@ -1648,7 +1652,7 @@ export async function downloadMonthlyExecutivePptx(
       margin: 0,
     });
     progress.addText(`+${Math.round(activity.periodIncrease * 10) / 10}`, {
-      x: 11.34,
+      x: x + 5.66,
       y,
       w: 0.65,
       h: 0.24,
@@ -1668,13 +1672,13 @@ export async function downloadMonthlyExecutivePptx(
   const tasks = pptx.addSlide();
   addChrome(
     tasks,
-    "Les tâches qui portent l’avancement",
+    "Toutes les tâches du mois",
     "Faits marquants",
     3,
     alstomLogo,
     oncfLogo,
   );
-  tasks.addText("Sélection fondée sur le gain mensuel et le niveau d’exécution.", {
+  tasks.addText("Toutes les tâches consolidées : avancement, production, responsables et prérequis.", {
     x: MARGIN,
     y: 1.4,
     w: 8.8,
@@ -1699,8 +1703,9 @@ export async function downloadMonthlyExecutivePptx(
           periodIncrease: 0,
         } as ExportTask,
       }]
-  ).forEach(({ task, activity }, index) => {
-    const y = 2.02 + index * 1.18;
+  ).forEach(({ task, activity }, index, entries) => {
+    const step = Math.min(1.18, 4.82 / Math.max(1, entries.length));
+    const y = 2.02 + index * step;
     tasks.addText(String(index + 1).padStart(2, "0"), {
       x: MARGIN,
       y,
@@ -1736,17 +1741,23 @@ export async function downloadMonthlyExecutivePptx(
       margin: 0,
       fit: "shrink",
     });
-    tasks.addText(summarizeDescription(task.workSummary, 88), {
+    tasks.addText(
+      summarizeDescription(
+        `${task.workSummary} Responsables : ${task.alstom || "Alstom non renseigné"} / ${task.avanzit || "Avanzit non renseigné"}. Prérequis : ${task.prerequisiteStatus || "non renseigné"}${task.prerequisiteDetails ? ` — ${task.prerequisiteDetails}` : ""}`,
+        155,
+      ),
+      {
       x: 1.28,
       y: y + 0.61,
       w: 4.35,
-      h: 0.3,
+      h: Math.max(0.22, step - 0.69),
       fontFace: "Arial",
-      fontSize: 10.5,
+      fontSize: 9.5,
       color: COLORS.slate,
       margin: 0,
       fit: "shrink",
-    });
+      },
+    );
     tasks.addText(`${task.realizedValue} / ${task.objectiveValue}`, {
       x: 5.92,
       y,
@@ -1787,7 +1798,7 @@ export async function downloadMonthlyExecutivePptx(
     });
     tasks.addShape("line", {
       x: MARGIN,
-      y: y + 0.96,
+      y: y + step - 0.1,
       w: 12.16,
       h: 0,
       line: { color: COLORS.line, width: 0.7 },
@@ -1804,6 +1815,12 @@ export async function downloadMonthlyExecutivePptx(
     oncfLogo,
   );
   const decisionGroups = [
+    {
+      title: "TRAVAUX RÉALISÉS",
+      items: data.completedWork,
+      fallback: "Aucun travail réalisé renseigné.",
+      color: COLORS.green,
+    },
     {
       title: "TRAVAUX EN COURS",
       items: data.ongoingWork,
@@ -1823,19 +1840,22 @@ export async function downloadMonthlyExecutivePptx(
       color: COLORS.green,
     },
   ];
-  decisionGroups.forEach((group, column) => {
-    const x = MARGIN + column * 4.1;
+  decisionGroups.forEach((group, index) => {
+    const column = index % 2;
+    const row = Math.floor(index / 2);
+    const x = MARGIN + column * 6.15;
+    const baseY = 1.55 + row * 1.82;
     priorities.addShape("line", {
       x,
-      y: 1.55,
-      w: 3.55,
+      y: baseY,
+      w: 5.55,
       h: 0,
       line: { color: group.color, width: 3 },
     });
     priorities.addText(group.title, {
       x,
-      y: 1.77,
-      w: 3.55,
+      y: baseY + 0.22,
+      w: 5.55,
       h: 0.28,
       fontFace: "Arial",
       fontSize: 13,
@@ -1844,34 +1864,22 @@ export async function downloadMonthlyExecutivePptx(
       margin: 0,
       fit: "shrink",
     });
-    (group.items.length ? group.items : [group.fallback])
-      .slice(0, 3)
-      .forEach((item, index) => {
-        const y = 2.28 + index * 0.98;
-        priorities.addText(String(index + 1).padStart(2, "0"), {
-          x,
-          y,
-          w: 0.42,
-          h: 0.25,
-          fontFace: "Arial",
-          fontSize: 11,
-          bold: true,
-          color: group.color,
-          margin: 0,
-        });
-        priorities.addText(summarizeDescription(item, 95), {
-          x: x + 0.52,
-          y: y - 0.02,
-          w: 3.03,
-          h: 0.65,
-          fontFace: "Arial",
-          fontSize: 12,
-          bold: index === 0,
-          color: COLORS.ink,
-          margin: 0,
-          fit: "shrink",
-        });
-      });
+    const values = group.items.length ? group.items : [group.fallback];
+    priorities.addText(
+      values.map((item, itemIndex) => `${itemIndex + 1}. ${summarizeDescription(item, 125)}`).join("\n"),
+      {
+        x,
+        y: baseY + 0.63,
+        w: 5.55,
+        h: 0.98,
+        fontFace: "Arial",
+        fontSize: 11.5,
+        color: COLORS.ink,
+        margin: 0,
+        breakLine: true,
+        fit: "shrink",
+      },
+    );
   });
   priorities.addShape("line", {
     x: MARGIN,
