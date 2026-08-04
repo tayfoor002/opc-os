@@ -22,7 +22,10 @@ import {
   type ReportExportData,
 } from "@/lib/reporting/exports";
 import { downloadReportPdf } from "@/lib/reporting/pdf-export";
-import { downloadMonthlyProgressPptx } from "@/lib/reporting/pptx-export";
+import {
+  downloadMonthlyExecutivePptx,
+  downloadMonthlyProgressPptx,
+} from "@/lib/reporting/pptx-export";
 import type { Activity } from "@/types/activity";
 import type {
   CollaboratorOption,
@@ -201,7 +204,7 @@ export function ReportingWorkspace() {
   const [showAvanzitLogo, setShowAvanzitLogo] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [exporting, setExporting] = useState<"pdf" | "word" | "pptx" | null>(null);
+  const [exporting, setExporting] = useState<"pdf" | "word" | "pptx" | "pptx-summary" | null>(null);
 
   async function loadReporting() {
     setLoading(true);
@@ -852,20 +855,28 @@ export function ReportingWorkspace() {
     setExporting(null);
   }
 
-  async function exportPowerPoint() {
+  async function exportPowerPoint(summary = false) {
     if (type !== "monthly") {
       setError(
         "La présentation client est basée sur le rapport mensuel. Sélectionnez « Rapport mensuel », puis choisissez la période à présenter.",
       );
       return;
     }
-    setExporting("pptx");
+    setExporting(summary ? "pptx-summary" : "pptx");
     setError("");
     try {
-      await downloadMonthlyProgressPptx(
-        buildExportData(),
-        `presentation-avancement-mensuel-pdd-${period.start}-${period.end}.pptx`,
-      );
+      const exportData = buildExportData();
+      if (summary) {
+        await downloadMonthlyExecutivePptx(
+          exportData,
+          `synthese-executive-pdd-3-slides-${period.start}-${period.end}.pptx`,
+        );
+      } else {
+        await downloadMonthlyProgressPptx(
+          exportData,
+          `presentation-avancement-mensuel-pdd-${period.start}-${period.end}.pptx`,
+        );
+      }
     } catch (exportError) {
       setError(
         exportError instanceof Error
@@ -970,12 +981,22 @@ export function ReportingWorkspace() {
           <button
             type="button"
             disabled={Boolean(exporting)}
-            onClick={() => void exportPowerPoint()}
+            onClick={() => void exportPowerPoint(false)}
             title={type === "monthly" ? "Générer la présentation client mensuelle" : "Disponible avec le rapport mensuel"}
             className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#0b2748] to-[#0050a4] px-4 py-3 text-sm font-black text-white shadow-sm disabled:opacity-60"
           >
             {exporting === "pptx" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Presentation className="h-4 w-4" />}
-            Présentation PowerPoint
+            PPT complet
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(exporting)}
+            onClick={() => void exportPowerPoint(true)}
+            title={type === "monthly" ? "Générer une synthèse exécutive en 3 slides" : "Disponible avec le rapport mensuel"}
+            className="flex items-center gap-2 rounded-xl border border-[#0b2748] bg-white px-4 py-3 text-sm font-black text-[#0b2748] shadow-sm disabled:opacity-60"
+          >
+            {exporting === "pptx-summary" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Presentation className="h-4 w-4" />}
+            Synthèse PPT · 3 slides
           </button>
         </div>
       </div>

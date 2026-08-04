@@ -1341,3 +1341,462 @@ export async function downloadMonthlyProgressPptx(
 
   await pptx.writeFile({ fileName, compression: true });
 }
+
+export async function downloadMonthlyExecutivePptx(
+  sourceData: ReportExportData,
+  fileName = "synthese-executive-mensuelle-pdd-3-slides.pptx",
+) {
+  const data = normalizeMonthlyPresentationData(sourceData);
+  const pptxLibrary = await import("pptxgenjs");
+  const Pptx = pptxLibrary.default;
+  const pptx = new Pptx();
+  pptx.layout = "LAYOUT_WIDE";
+  pptx.author = "OPC OS";
+  pptx.company = "ALSTOM";
+  pptx.subject = "Synthèse exécutive mensuelle du programme PDD";
+  pptx.title = `Synthèse exécutive — ${data.locationTitle}`;
+  pptx.theme = { headFontFace: "Arial", bodyFontFace: "Arial" };
+
+  const rankedActivities = [...data.activities].sort(
+    (left, right) =>
+      right.periodIncrease - left.periodIncrease || right.progress - left.progress,
+  );
+  const activityScores = new Map(
+    rankedActivities.map((activity, index) => [activity.name, rankedActivities.length - index]),
+  );
+  const rankedPhotos = [...data.photos]
+    .sort((left, right) => {
+      const scoreDifference =
+        (activityScores.get(right.activity) ?? 0) -
+        (activityScores.get(left.activity) ?? 0);
+      return scoreDifference || right.date.localeCompare(left.date);
+    });
+  const keyPhotos: ExportPhoto[] = [];
+  const selectedActivities = new Set<string>();
+  rankedPhotos.forEach((photo) => {
+    if (keyPhotos.length >= 2 || selectedActivities.has(photo.activity)) return;
+    keyPhotos.push(photo);
+    selectedActivities.add(photo.activity);
+  });
+  rankedPhotos.forEach((photo) => {
+    if (keyPhotos.length >= 2 || keyPhotos.includes(photo)) return;
+    keyPhotos.push(photo);
+  });
+
+  const [alstomLogo, oncfLogo, coverImage, ...photoData] = await Promise.all([
+    imageData("/alstom-logo.png"),
+    imageData("/oncf-logo.png"),
+    imageData("/rail-blueprint-final.jpg", {
+      maximumWidth: 1920,
+      maximumHeight: 1080,
+      jpeg: true,
+    }),
+    ...keyPhotos.map((photo) =>
+      imageData(photo.url, {
+        maximumWidth: 1600,
+        maximumHeight: 1000,
+        jpeg: true,
+      }).catch(() => ""),
+    ),
+  ]);
+
+  const cover = pptx.addSlide();
+  cover.background = { color: COLORS.navy };
+  cover.addImage({
+    data: coverImage,
+    x: 0,
+    y: 0,
+    w: SLIDE.width,
+    h: SLIDE.height,
+    sizing: { type: "cover", w: SLIDE.width, h: SLIDE.height },
+    altText: "Infrastructure ferroviaire",
+  });
+  cover.addShape("rect", {
+    x: 0,
+    y: 0,
+    w: SLIDE.width,
+    h: SLIDE.height,
+    line: { color: COLORS.navy, transparency: 100 },
+    fill: { color: COLORS.navy, transparency: 14 },
+  });
+  cover.addShape("roundRect", {
+    x: MARGIN,
+    y: 0.48,
+    w: 3.3,
+    h: 0.68,
+    rectRadius: 0.06,
+    line: { color: COLORS.white, transparency: 100 },
+    fill: { color: COLORS.white, transparency: 3 },
+  });
+  cover.addImage({
+    data: alstomLogo,
+    x: 0.83,
+    y: 0.65,
+    w: 1.38,
+    h: 0.32,
+    sizing: { type: "contain", w: 1.38, h: 0.32 },
+    altText: "Logo Alstom",
+  });
+  addOncfLogo(cover, oncfLogo, 2.48, 0.58, 0.84, 0.46);
+  cover.addText("SYNTHÈSE EXÉCUTIVE\nMENSUELLE", {
+    x: MARGIN,
+    y: 2.05,
+    w: 7.2,
+    h: 1.5,
+    fontFace: "Arial",
+    fontSize: 36,
+    bold: true,
+    color: COLORS.white,
+    margin: 0,
+    fit: "shrink",
+  });
+  cover.addShape("line", {
+    x: MARGIN,
+    y: 3.78,
+    w: 1.2,
+    h: 0,
+    line: { color: COLORS.red, width: 5 },
+  });
+  cover.addText(data.locationTitle.toUpperCase(), {
+    x: MARGIN,
+    y: 4.03,
+    w: 6.8,
+    h: 0.5,
+    fontFace: "Arial",
+    fontSize: 24,
+    bold: true,
+    color: COLORS.white,
+    margin: 0,
+    fit: "shrink",
+  });
+  cover.addText(data.periodTitle, {
+    x: MARGIN,
+    y: 4.65,
+    w: 6.9,
+    h: 0.34,
+    fontFace: "Arial",
+    fontSize: 17,
+    color: "D8E6F5",
+    margin: 0,
+    fit: "shrink",
+  });
+  cover.addText(`${Math.round(data.metrics.globalProgress * 10) / 10}%`, {
+    x: 9.1,
+    y: 2.3,
+    w: 3.15,
+    h: 0.92,
+    fontFace: "Arial",
+    fontSize: 52,
+    bold: true,
+    color: COLORS.greenSoft,
+    align: "right",
+    margin: 0,
+  });
+  cover.addText("AVANCEMENT GLOBAL", {
+    x: 9.1,
+    y: 3.25,
+    w: 3.15,
+    h: 0.24,
+    fontFace: "Arial",
+    fontSize: 11,
+    bold: true,
+    charSpacing: 1.2,
+    color: "C9D7E6",
+    align: "right",
+    margin: 0,
+  });
+  cover.addText(`+${Math.round(data.metrics.globalGain * 10) / 10} pts`, {
+    x: 9.1,
+    y: 3.84,
+    w: 3.15,
+    h: 0.56,
+    fontFace: "Arial",
+    fontSize: 27,
+    bold: true,
+    color: COLORS.white,
+    align: "right",
+    margin: 0,
+  });
+  cover.addText("GAIN DU MOIS", {
+    x: 9.1,
+    y: 4.42,
+    w: 3.15,
+    h: 0.24,
+    fontFace: "Arial",
+    fontSize: 10,
+    bold: true,
+    charSpacing: 1.2,
+    color: COLORS.red,
+    align: "right",
+    margin: 0,
+  });
+  cover.addText("MARCHÉ N° 625C07 · PROGRAMME DE DÉVELOPPEMENT", {
+    x: MARGIN,
+    y: 6.68,
+    w: 6.8,
+    h: 0.24,
+    fontFace: "Arial",
+    fontSize: 10,
+    bold: true,
+    charSpacing: 1.2,
+    color: COLORS.white,
+    margin: 0,
+    fit: "shrink",
+  });
+
+  const progress = pptx.addSlide();
+  addChrome(
+    progress,
+    `Le projet gagne ${Math.round(data.metrics.globalGain * 10) / 10} points ce mois`,
+    "Décision en un regard",
+    2,
+    alstomLogo,
+    oncfLogo,
+  );
+  progress.addText(`${Math.round(data.metrics.globalProgress * 10) / 10}%`, {
+    x: MARGIN,
+    y: 1.58,
+    w: 2.15,
+    h: 0.78,
+    fontFace: "Arial",
+    fontSize: 42,
+    bold: true,
+    color: COLORS.navy,
+    margin: 0,
+  });
+  progress.addText("AVANCEMENT CONSOLIDÉ", {
+    x: MARGIN,
+    y: 2.34,
+    w: 2.45,
+    h: 0.22,
+    fontFace: "Arial",
+    fontSize: 10,
+    bold: true,
+    charSpacing: 1.1,
+    color: COLORS.muted,
+    margin: 0,
+  });
+  addProgressBar(
+    progress,
+    3.12,
+    1.86,
+    7.2,
+    0.28,
+    data.metrics.globalProgress,
+    data.metrics.globalGain,
+  );
+  progress.addText(`+${Math.round(data.metrics.globalGain * 10) / 10} pts`, {
+    x: 10.62,
+    y: 1.7,
+    w: 1.55,
+    h: 0.48,
+    fontFace: "Arial",
+    fontSize: 24,
+    bold: true,
+    color: COLORS.green,
+    align: "right",
+    margin: 0,
+  });
+  progress.addText("ACTIVITÉS LES PLUS SIGNIFICATIVES", {
+    x: MARGIN,
+    y: 2.98,
+    w: 4.4,
+    h: 0.26,
+    fontFace: "Arial",
+    fontSize: 12,
+    bold: true,
+    charSpacing: 1,
+    color: COLORS.red,
+    margin: 0,
+  });
+  rankedActivities.slice(0, 4).forEach((activity, index) => {
+    const y = 3.48 + index * 0.64;
+    progress.addText(compactText(activity.name, 42), {
+      x: MARGIN,
+      y,
+      w: 4.05,
+      h: 0.27,
+      fontFace: "Arial",
+      fontSize: 13,
+      bold: true,
+      color: COLORS.ink,
+      margin: 0,
+      fit: "shrink",
+    });
+    addProgressBar(progress, 4.88, y + 0.05, 5.3, 0.17, activity.progress, activity.periodIncrease);
+    progress.addText(`${Math.round(activity.progress * 10) / 10}%`, {
+      x: 10.42,
+      y: y - 0.02,
+      w: 0.75,
+      h: 0.28,
+      fontFace: "Arial",
+      fontSize: 14,
+      bold: true,
+      color: COLORS.green,
+      align: "right",
+      margin: 0,
+    });
+    progress.addText(`+${Math.round(activity.periodIncrease * 10) / 10}`, {
+      x: 11.34,
+      y,
+      w: 0.65,
+      h: 0.24,
+      fontFace: "Arial",
+      fontSize: 11,
+      bold: true,
+      color: COLORS.green,
+      align: "right",
+      margin: 0,
+    });
+  });
+  addMetric(progress, MARGIN, "Terminées", String(data.metrics.completed), "tâches clôturées", COLORS.green);
+  addMetric(progress, 3.48, "En cours", String(data.metrics.inProgress), "tâches actives", COLORS.blue);
+  addMetric(progress, 6.38, "À engager", String(data.metrics.notStarted), "tâches non démarrées", COLORS.muted);
+  addMetric(progress, 9.28, "Alertes", String(data.blockers.length), "points à surveiller", data.blockers.length ? COLORS.red : COLORS.green);
+
+  const priorities = pptx.addSlide();
+  addChrome(
+    priorities,
+    data.blockers.length ? "Sécuriser le prochain cycle" : "Engager le prochain cycle",
+    "Terrain et décisions",
+    3,
+    alstomLogo,
+    oncfLogo,
+  );
+  keyPhotos.forEach((photo, index) => {
+    const x = MARGIN + index * 6.15;
+    priorities.addShape("rect", {
+      x,
+      y: 1.48,
+      w: 5.86,
+      h: 2.75,
+      line: { color: COLORS.line, width: 0.8 },
+      fill: { color: COLORS.pale },
+    });
+    if (photoData[index]) {
+      priorities.addImage({
+        data: photoData[index],
+        x,
+        y: 1.48,
+        w: 5.86,
+        h: 2.75,
+        sizing: { type: "cover", w: 5.86, h: 2.75 },
+        altText: photo.caption || photo.task,
+      });
+    }
+    priorities.addShape("rect", {
+      x,
+      y: 3.55,
+      w: 5.86,
+      h: 0.68,
+      line: { color: COLORS.navy, transparency: 100 },
+      fill: { color: COLORS.navy, transparency: 6 },
+    });
+    priorities.addText(compactText(photo.activity, 48), {
+      x: x + 0.18,
+      y: 3.65,
+      w: 5.5,
+      h: 0.24,
+      fontFace: "Arial",
+      fontSize: 13,
+      bold: true,
+      color: COLORS.white,
+      margin: 0,
+      fit: "shrink",
+    });
+    priorities.addText(summarizeDescription(photo.caption, 105), {
+      x,
+      y: 4.4,
+      w: 5.86,
+      h: 0.54,
+      fontFace: "Arial",
+      fontSize: 12,
+      color: COLORS.slate,
+      margin: 0,
+      fit: "shrink",
+    });
+  });
+  if (!keyPhotos.length) {
+    priorities.addText("Aucune photo terrain n’est disponible sur la période sélectionnée.", {
+      x: MARGIN,
+      y: 2.42,
+      w: 12.1,
+      h: 0.5,
+      fontFace: "Arial",
+      fontSize: 20,
+      bold: true,
+      color: COLORS.muted,
+      align: "center",
+      margin: 0,
+    });
+  }
+  priorities.addShape("line", {
+    x: MARGIN,
+    y: 5.28,
+    w: 12.16,
+    h: 0,
+    line: { color: COLORS.line, width: 1 },
+  });
+  priorities.addText("POINT DE VIGILANCE", {
+    x: MARGIN,
+    y: 5.58,
+    w: 2.7,
+    h: 0.23,
+    fontFace: "Arial",
+    fontSize: 11,
+    bold: true,
+    charSpacing: 1,
+    color: data.blockers.length ? COLORS.red : COLORS.green,
+    margin: 0,
+  });
+  priorities.addText(
+    summarizeDescription(
+      data.blockers[0] || "Aucun blocage majeur n’est déclaré sur la période.",
+      150,
+    ),
+    {
+      x: MARGIN,
+      y: 5.9,
+      w: 5.6,
+      h: 0.72,
+      fontFace: "Arial",
+      fontSize: 16,
+      bold: true,
+      color: COLORS.ink,
+      margin: 0,
+      fit: "shrink",
+    },
+  );
+  priorities.addText("PROCHAIN JALON", {
+    x: 6.86,
+    y: 5.58,
+    w: 2.4,
+    h: 0.23,
+    fontFace: "Arial",
+    fontSize: 11,
+    bold: true,
+    charSpacing: 1,
+    color: COLORS.blue,
+    margin: 0,
+  });
+  priorities.addText(
+    summarizeDescription(
+      data.nextSteps[0] || "Poursuivre les activités planifiées et consolider les mises à jour terrain.",
+      150,
+    ),
+    {
+      x: 6.86,
+      y: 5.9,
+      w: 5.88,
+      h: 0.72,
+      fontFace: "Arial",
+      fontSize: 16,
+      bold: true,
+      color: COLORS.ink,
+      margin: 0,
+      fit: "shrink",
+    },
+  );
+
+  await pptx.writeFile({ fileName, compression: true });
+}
