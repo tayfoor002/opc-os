@@ -67,8 +67,16 @@ export function DocumentsPvGenerator({
   }
 
   async function generateAndArchive() {
-    if (!projectId || !zoneId || !title.trim() || !text.trim()) {
-      setError("Le projet, la zone, le titre et le texte du PV sont obligatoires.");
+    if (!projectId) {
+      setError("Sélectionnez le projet du PV.");
+      return;
+    }
+    if (!title.trim()) {
+      setError("Saisissez le titre du PV.");
+      return;
+    }
+    if (!text.trim()) {
+      setError("Collez le texte digitalisé complet du PV.");
       return;
     }
     setGenerating(true);
@@ -100,7 +108,7 @@ export function DocumentsPvGenerator({
       const insert = await supabase.from("documents").insert({
         id: documentId,
         project_id: projectId,
-        zone_id: zoneId,
+        zone_id: zoneId || null,
         title: pv.title,
         reference,
         revision: "00",
@@ -145,7 +153,7 @@ export function DocumentsPvGenerator({
             </select>
           </label>
           <label className="text-xs font-black uppercase tracking-wide text-slate-500">
-            Zone de classement
+            Zone de classement (facultative)
             <select value={zoneId} onChange={(event) => { setZoneId(event.target.value); invalidate(); }} className="input mt-2 normal-case">
               <option value="">Sélectionner la zone…</option>
               {zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.code ? `${zone.code} — ` : ""}{zone.name}</option>)}
@@ -169,7 +177,7 @@ export function DocumentsPvGenerator({
         </label>
         {error ? <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</p> : null}
         {!generated ? (
-          <button type="button" disabled={generating || !projectId || !zoneId || !title.trim() || !text.trim()} onClick={() => void generateAndArchive()} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 text-sm font-black text-white disabled:opacity-40">
+          <button type="button" disabled={generating} onClick={() => void generateAndArchive()} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 text-sm font-black text-white disabled:cursor-wait disabled:opacity-60">
             {generating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
             {generating ? "Génération et classement…" : "Générer et classer dans Documents → PV"}
           </button>
