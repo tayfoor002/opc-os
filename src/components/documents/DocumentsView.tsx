@@ -77,11 +77,14 @@ export function DocumentsView({ documents, projects }: Props) {
     [documents, query, subcategoryFilter, typeFilter],
   );
 
-  function toggleDocument(documentId: string) {
+  function toggleDocument(documentIds: string[]) {
     setSelectedIds((current) => {
       const next = new Set(current);
-      if (next.has(documentId)) next.delete(documentId);
-      else next.add(documentId);
+      const allSelected = documentIds.every((documentId) => next.has(documentId));
+      for (const documentId of documentIds) {
+        if (allSelected) next.delete(documentId);
+        else next.add(documentId);
+      }
       return next;
     });
   }
@@ -291,7 +294,7 @@ export function DocumentsView({ documents, projects }: Props) {
         selectedIds={selectedIds}
         onToggle={toggleDocument}
         onToggleAll={toggleAllVisible}
-        onRequestDelete={(documentId) => requestDelete([documentId])}
+        onRequestDelete={requestDelete}
       />
 
       {selectedIds.size ? (

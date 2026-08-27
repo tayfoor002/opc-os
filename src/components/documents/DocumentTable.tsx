@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Pencil, Trash2 } from "lucide-react";
+import { FileScan, FileText, Pencil, Trash2 } from "lucide-react";
 
 import type { DocumentListItem } from "@/lib/documents/queries";
 
@@ -7,9 +7,9 @@ type DocumentTableProps = {
   documents: DocumentListItem[];
   allDocuments: DocumentListItem[];
   selectedIds: Set<string>;
-  onToggle: (documentId: string) => void;
+  onToggle: (documentIds: string[]) => void;
   onToggleAll: () => void;
-  onRequestDelete: (documentId: string) => void;
+  onRequestDelete: (documentIds: string[]) => void;
 };
 
 const typeLabels: Record<string, string> = {
@@ -43,6 +43,29 @@ export function DocumentTable({
   onToggleAll,
   onRequestDelete,
 }: DocumentTableProps) {
+  const originalByReference = new Map<string, DocumentListItem>();
+  for (const document of allDocuments) {
+    if (document.document_subcategory !== "pv_scan_original") continue;
+    const generatedReference = document.reference?.replace(/-ORG$/i, "") ?? "";
+    if (generatedReference) originalByReference.set(generatedReference, document);
+  }
+  const groupedRows = documents
+    .filter((document) => {
+      if (document.document_subcategory !== "pv_scan_original") return true;
+      const generatedReference = document.reference?.replace(/-ORG$/i, "") ?? "";
+      return !documents.some(
+        (candidate) =>
+          candidate.document_subcategory === "pv_reunion" &&
+          candidate.reference === generatedReference,
+      );
+    })
+    .map((document) => ({
+      document,
+      original:
+        document.document_subcategory === "pv_reunion" && document.reference
+          ? originalByReference.get(document.reference) ?? null
+          : null,
+    }));
   const latestPlanIds = new Set<string>();
   const seenPlanReferences = new Set<string>();
   for (const document of allDocuments) {
@@ -83,7 +106,7 @@ export function DocumentTable({
                   className="size-4 cursor-pointer rounded border-slate-300 accent-[var(--opc-blue)]"
                 />
               </th>
-              <th className="w-48 px-3 py-4">Actions</th>
+              <th className="min-w-80 px-3 py-4">Fichiers / actions</th>
               <th className="px-5 py-4">Référence</th>
               <th className="px-5 py-4">Titre</th>
               <th className="px-5 py-4">Type / sous-catégorie</th>
@@ -94,9 +117,12 @@ export function DocumentTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--opc-border)]">
-            {documents.map((document) => {
+            {groupedRows.map(({ document, original }) => {
               const isLatestPlan = latestPlanIds.has(document.id);
-              const isSelected = selectedIds.has(document.id);
+              const groupedIds = [document.id, original?.id].filter(
+                (id): id is string => Boolean(id),
+              );
+              const isSelected = groupedIds.every((id) => selectedIds.has(id));
               return (
                 <tr
                   key={document.id}
@@ -108,24 +134,40 @@ export function DocumentTable({
                     <input
                       type="checkbox"
                       checked={isSelected}
-                      onChange={() => onToggle(document.id)}
+                      onChange={() => onToggle(groupedIds)}
                       aria-label={`Sélectionner ${document.title}`}
                       className="size-4 cursor-pointer rounded border-slate-300 accent-[var(--opc-blue)]"
                     />
                   </td>
-                  <td className="w-48 px-3 py-4">
-                    <div className="flex items-center gap-2">
+                  <td className="min-w-80 px-3 py-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/documents/${document.id}`}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[var(--opc-blue)] px-3 text-xs font-black text-white transition hover:bg-blue-700"
+                      >
+                        <FileText className="size-3.5" />
+                        {original ? "PV généré" : "Ouvrir"}
+                      </Link>
+                      {original ? (
+                        <Link
+                          href={`/documents/${original.id}`}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-cyan-700 px-3 text-xs font-black text-white transition hover:bg-cyan-800"
+                        >
+                          <FileScan className="size-3.5" />
+                          Scan original
+                        </Link>
+                      ) : null}
                       <Link
                         href={`/documents/${document.id}?edit=1`}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                        className="inline-flex size-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
                         aria-label={`Modifier ${document.title}`}
+                        title="Modifier"
                       >
                         <Pencil className="size-3.5" />
-                        Modifier
                       </Link>
                       <button
                         type="button"
-                        onClick={() => onRequestDelete(document.id)}
+                        onClick={() => onRequestDelete(groupedIds)}
                         className="inline-flex size-9 items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 transition hover:bg-red-50"
                         aria-label={`Supprimer ${document.title}`}
                         title="Supprimer"
@@ -141,6 +183,11 @@ export function DocumentTable({
                   </Cell>
                   <Cell document={document}>
                     <span className="font-bold">{document.title}</span>
+                    {original ? (
+                      <span className="mt-1 block text-xs font-semibold text-cyan-700">
+                        PV généré + scan original
+                      </span>
+                    ) : null}
                   </Cell>
                   <Cell document={document}>
                     <span className="font-bold">
