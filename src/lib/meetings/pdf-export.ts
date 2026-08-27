@@ -205,6 +205,12 @@ export async function downloadMeetingPdf(
         "Statut",
         meeting.status === "finalized" ? "Finalisé" : "Brouillon",
       ],
+      [
+        "Zone chantier",
+        meeting.zone_name || "Non classée",
+        "Classement",
+        meetingTypeLabel(meeting.meeting_type),
+      ],
     ],
     columnStyles: {
       0: { fontStyle: "bold", fillColor: [244, 248, 252] },

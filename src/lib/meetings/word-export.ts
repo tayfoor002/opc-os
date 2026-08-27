@@ -1,5 +1,16 @@
 import type { MeetingMinute } from "@/types/meeting";
 
+function meetingTypeLabel(type: MeetingMinute["meeting_type"]) {
+  return {
+    coordination: "Réunion de coordination",
+    site: "Réunion chantier",
+    technical: "Réunion technique",
+    safety: "Réunion sécurité / EHS",
+    client: "Réunion client",
+    other: "Autre réunion",
+  }[type];
+}
+
 async function loadMeetingImage(path: string) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`Image indisponible : ${path}`);
@@ -357,6 +368,14 @@ export async function downloadMeetingWord(
                   ),
                   cell("Statut", true),
                   cell(meeting.status === "finalized" ? "Finalisé" : "Brouillon"),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  cell("Zone chantier", true),
+                  cell(meeting.zone_name ?? "Non classée"),
+                  cell("Classement", true),
+                  cell(meetingTypeLabel(meeting.meeting_type)),
                 ],
               }),
             ],

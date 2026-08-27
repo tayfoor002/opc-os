@@ -30,6 +30,9 @@ Puis ouvrir `http://localhost:3000`.
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://VOTRE_PROJET.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=VOTRE_CLE_PUBLISHABLE
+OPENAI_API_KEY=VOTRE_CLE_OPENAI_COTE_SERVEUR
+# Facultatif : modèle de vision haute précision pour les PV manuscrits
+OPENAI_OCR_MODEL=gpt-5.5
 ```
 
 Ne jamais ajouter `.env.local` au dépôt Git.
@@ -40,6 +43,11 @@ Dans Supabase SQL Editor, exécuter dans l'ordre :
 
 1. `supabase/migrations/001_opc_os_v2.sql`
 2. `supabase/seed.sql` (facultatif)
+
+Pour activer l'import, le classement et l'archivage des PV manuscrits sur une
+base existante, exécuter également
+`supabase/migrations/018_handwritten_meeting_pv.sql`. La clé OpenAI ne doit
+jamais être préfixée par `NEXT_PUBLIC_` : elle reste uniquement sur le serveur.
 
 ## Architecture métier
 

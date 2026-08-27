@@ -47,6 +47,8 @@ export type MeetingPhoto = {
 export type MeetingMinute = {
   id: string;
   project_id: string;
+  zone_id: string | null;
+  zone_name?: string;
   title: string;
   meeting_date: string;
   start_time: string | null;
@@ -61,6 +63,11 @@ export type MeetingMinute = {
   photos: MeetingPhoto[];
   general_notes: string | null;
   next_meeting_date: string | null;
+  source_file_path: string | null;
+  source_original_name: string | null;
+  source_mime_type: string | null;
+  ocr_confidence: number | null;
+  ocr_warnings: string[];
   status: MeetingStatus;
   created_at: string;
   updated_at: string;

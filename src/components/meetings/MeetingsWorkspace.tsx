@@ -14,6 +14,7 @@ import {
   FileDown,
   FileSpreadsheet,
   FileText,
+  FileUp,
   Loader2,
   MapPin,
   RefreshCw,
@@ -42,6 +43,8 @@ import type {
   MeetingType,
 } from "@/types/meeting";
 import { ConfirmDeleteDialog } from "@/components/ui/ConfirmDeleteDialog";
+import { HandwrittenPvImport } from "@/components/meetings/HandwrittenPvImport";
+import type { PvOcrResult } from "@/lib/meetings/pv-ocr";
 
 const meetingTypeLabels: Record<MeetingType, string> = {
   coordination: "Réunion de coordination",
@@ -63,6 +66,8 @@ type PendingMeetingPhoto = {
   caption: string;
   previewUrl: string;
 };
+
+type MeetingZone = { id: string; code: string; name: string };
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -91,6 +96,7 @@ function newCustomTable(): MeetingCustomTable {
 
 function emptyMeeting(): MeetingForm {
   return {
+    zone_id: null,
     title: "",
     meeting_date: today(),
     start_time: "",
@@ -105,6 +111,11 @@ function emptyMeeting(): MeetingForm {
     photos: [],
     general_notes: "",
     next_meeting_date: "",
+    source_file_path: null,
+    source_original_name: null,
+    source_mime_type: null,
+    ocr_confidence: null,
+    ocr_warnings: [],
     status: "draft",
   };
 }
@@ -127,6 +138,7 @@ export function MeetingsWorkspace() {
   const supabase = useMemo(() => createClient(), []);
   const [projectId, setProjectId] = useState("");
   const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
+  const [zones, setZones] = useState<MeetingZone[]>([]);
   const [meetings, setMeetings] = useState<MeetingMinute[]>([]);
   const [form, setForm] = useState<MeetingForm>(() => emptyMeeting());
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -136,6 +148,7 @@ export function MeetingsWorkspace() {
   const [archiveStatus, setArchiveStatus] = useState<"all" | MeetingStatus>(
     "all",
   );
+  const [archiveZone, setArchiveZone] = useState("all");
   const [manualName, setManualName] = useState("");
   const [manualCompany, setManualCompany] = useState("");
   const [manualRole, setManualRole] = useState("");
@@ -151,6 +164,8 @@ export function MeetingsWorkspace() {
   >({});
   const [pendingPhotos, setPendingPhotos] = useState<PendingMeetingPhoto[]>([]);
   const [removedPhotoPaths, setRemovedPhotoPaths] = useState<string[]>([]);
+  const [pendingPvSource, setPendingPvSource] = useState<File | null>(null);
+  const [sourcePvUrls, setSourcePvUrls] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [meetingToDelete, setMeetingToDelete] =
@@ -172,7 +187,7 @@ export function MeetingsWorkspace() {
     }
     setProjectId(project.data.id);
 
-    const [peopleResult, meetingsResult] = await Promise.all([
+    const [peopleResult, meetingsResult, zonesResult] = await Promise.all([
       supabase
         .from("collaborators")
         .select("id,full_name,company,role,profile,phone")
@@ -186,6 +201,11 @@ export function MeetingsWorkspace() {
         .eq("project_id", project.data.id)
         .order("meeting_date", { ascending: false })
         .order("created_at", { ascending: false }),
+      supabase
+        .from("zones")
+        .select("id,code,name")
+        .eq("project_id", project.data.id)
+        .order("sort_order"),
     ]);
 
     if (peopleResult.error) {
@@ -194,6 +214,11 @@ export function MeetingsWorkspace() {
       setCollaborators(
         (peopleResult.data ?? []) as unknown as CollaboratorOption[],
       );
+    }
+    if (zonesResult.error) {
+      setError(`Les zones ne sont pas disponibles : ${zonesResult.error.message}`);
+    } else {
+      setZones((zonesResult.data ?? []) as MeetingZone[]);
     }
     if (meetingsResult.error) {
       setError(
@@ -206,6 +231,7 @@ export function MeetingsWorkspace() {
         ...meeting,
         custom_tables: meeting.custom_tables ?? [],
         photos: meeting.photos ?? [],
+        ocr_warnings: meeting.ocr_warnings ?? [],
       }));
       setMeetings(loadedMeetings);
       const photoPaths = loadedMeetings.flatMap((meeting) =>
@@ -226,6 +252,25 @@ export function MeetingsWorkspace() {
         }
       } else {
         setMeetingPhotoUrls({});
+      }
+      const sourcePaths = loadedMeetings
+        .map((meeting) => meeting.source_file_path)
+        .filter((path): path is string => Boolean(path));
+      if (sourcePaths.length) {
+        const signedSources = await supabase.storage
+          .from("meeting-pv-sources")
+          .createSignedUrls(sourcePaths, 60 * 60);
+        if (!signedSources.error) {
+          setSourcePvUrls(
+            Object.fromEntries(
+              (signedSources.data ?? [])
+                .filter((item) => item.signedUrl)
+                .map((item) => [item.path, item.signedUrl]),
+            ),
+          );
+        }
+      } else {
+        setSourcePvUrls({});
       }
     }
     setLoading(false);
@@ -251,13 +296,15 @@ export function MeetingsWorkspace() {
       .includes(archiveSearch.toLowerCase());
     const matchesStatus =
       archiveStatus === "all" || meeting.status === archiveStatus;
-    return matchesSearch && matchesStatus;
+    const matchesZone = archiveZone === "all" || meeting.zone_id === archiveZone;
+    return matchesSearch && matchesStatus && matchesZone;
   });
 
   const currentMeeting: MeetingMinute = {
     id: editingId ?? "preview",
     project_id: projectId,
     ...form,
+    zone_name: zones.find((zone) => zone.id === form.zone_id)?.name,
     photos: [
       ...form.photos.map((photo) => ({
         ...photo,
@@ -280,6 +327,7 @@ export function MeetingsWorkspace() {
     setForm(emptyMeeting());
     setPendingPhotos([]);
     setRemovedPhotoPaths([]);
+    setPendingPvSource(null);
     setRawPoints("");
     setNotice("");
     setError("");
@@ -291,6 +339,7 @@ export function MeetingsWorkspace() {
     setEditingId(meeting.id);
     setForm({
       title: meeting.title,
+      zone_id: meeting.zone_id ?? null,
       meeting_date: meeting.meeting_date,
       start_time: meeting.start_time ?? "",
       end_time: meeting.end_time ?? "",
@@ -307,14 +356,64 @@ export function MeetingsWorkspace() {
       photos: meeting.photos ?? [],
       general_notes: meeting.general_notes ?? "",
       next_meeting_date: meeting.next_meeting_date ?? "",
+      source_file_path: meeting.source_file_path ?? null,
+      source_original_name: meeting.source_original_name ?? null,
+      source_mime_type: meeting.source_mime_type ?? null,
+      ocr_confidence: meeting.ocr_confidence ?? null,
+      ocr_warnings: meeting.ocr_warnings ?? [],
       status: meeting.status,
     });
     setRawPoints("");
     setPendingPhotos([]);
     setRemovedPhotoPaths([]);
+    setPendingPvSource(null);
     setNotice("");
     setError("");
     setView("generator");
+  }
+
+  function applyPvAnalysis(
+    result: PvOcrResult,
+    sourceFile: File,
+    zoneId: string,
+    classification: MeetingType,
+  ) {
+    setForm((current) => ({
+      ...current,
+      zone_id: zoneId,
+      title: result.title.trim() || current.title || "Procès-verbal de réunion",
+      meeting_date: result.meeting_date || current.meeting_date,
+      start_time: result.start_time || "",
+      end_time: result.end_time || "",
+      location: result.location || "",
+      meeting_type: classification,
+      objective: result.objective || "",
+      introduction: result.introduction || "",
+      participants: result.participants.map((participant) => ({
+        id: crypto.randomUUID(),
+        collaborator_id: null,
+        name: participant.name,
+        company: participant.company,
+        role: participant.role,
+        manual: true,
+      })),
+      agenda_points: result.agenda_points.length
+        ? result.agenda_points.map((point) => ({
+            id: crypto.randomUUID(),
+            ...point,
+          }))
+        : [newPoint()],
+      general_notes: result.general_notes || "",
+      next_meeting_date: result.next_meeting_date || "",
+      source_original_name: sourceFile.name,
+      source_mime_type: sourceFile.type,
+      ocr_confidence: result.confidence,
+      ocr_warnings: [...result.warnings, ...result.uncertain_fragments],
+    }));
+    setPendingPvSource(sourceFile);
+    setNotice(
+      `PV lu et classé. Fiabilité estimée : ${Math.round(result.confidence * 100)} %. Vérifiez les passages signalés avant d’archiver.`,
+    );
   }
 
   function toggleCollaborator(person: CollaboratorOption) {
@@ -538,6 +637,7 @@ export function MeetingsWorkspace() {
     setNotice("");
     const payload = {
       project_id: projectId,
+      zone_id: form.zone_id || null,
       title: form.title.trim(),
       meeting_date: form.meeting_date,
       start_time: form.start_time || null,
@@ -561,8 +661,14 @@ export function MeetingsWorkspace() {
       })),
       general_notes: form.general_notes?.trim() || null,
       next_meeting_date: form.next_meeting_date || null,
+      source_file_path: form.source_file_path,
+      source_original_name: form.source_original_name,
+      source_mime_type: form.source_mime_type,
+      ocr_confidence: form.ocr_confidence,
+      ocr_warnings: form.ocr_warnings,
       status,
     };
+    let sourceArchiveError = "";
     const result = editingId
       ? await supabase
           .from("meeting_minutes")
@@ -580,6 +686,36 @@ export function MeetingsWorkspace() {
       setError(result.error.message);
     } else {
       let saved = result.data as unknown as MeetingMinute;
+      if (pendingPvSource) {
+        const previousPath = saved.source_file_path;
+        const sourcePath = `${projectId}/${saved.id}/${Date.now()}-${safeStorageFileName(pendingPvSource.name)}`;
+        const sourceUpload = await supabase.storage
+          .from("meeting-pv-sources")
+          .upload(sourcePath, pendingPvSource, {
+            contentType: pendingPvSource.type,
+            upsert: false,
+          });
+        if (sourceUpload.error) {
+          sourceArchiveError = `Le CR est enregistré, mais le PV original n’a pas été archivé : ${sourceUpload.error.message}`;
+        } else {
+          const sourceUpdate = await supabase
+            .from("meeting_minutes")
+            .update({ source_file_path: sourcePath })
+            .eq("id", saved.id)
+            .select("*")
+            .single();
+          if (!sourceUpdate.error) {
+            saved = sourceUpdate.data as unknown as MeetingMinute;
+            if (previousPath && previousPath !== sourcePath) {
+              await supabase.storage.from("meeting-pv-sources").remove([previousPath]);
+            }
+            setPendingPvSource(null);
+          } else {
+            await supabase.storage.from("meeting-pv-sources").remove([sourcePath]);
+            sourceArchiveError = `Le CR est enregistré, mais son PV original n’a pas pu être relié : ${sourceUpdate.error.message}`;
+          }
+        }
+      }
       setEditingId(saved.id);
       const uploadedPhotos: MeetingPhoto[] = [];
       const uploadedPaths: string[] = [];
@@ -635,6 +771,10 @@ export function MeetingsWorkspace() {
       setForm((current) => ({
         ...current,
         photos: mergedPhotos,
+        source_file_path: saved.source_file_path ?? current.source_file_path,
+        source_original_name:
+          saved.source_original_name ?? current.source_original_name,
+        source_mime_type: saved.source_mime_type ?? current.source_mime_type,
         status,
       }));
       setNotice(
@@ -643,6 +783,7 @@ export function MeetingsWorkspace() {
           : "Brouillon enregistré dans les archives.",
       );
       await loadMeetings();
+      if (sourceArchiveError) setError(sourceArchiveError);
     }
     setSaving(false);
   }
@@ -663,6 +804,11 @@ export function MeetingsWorkspace() {
       if (photoPaths.length) {
         await supabase.storage.from("meeting-photos").remove(photoPaths);
       }
+      if (meetingToDelete.source_file_path) {
+        await supabase.storage
+          .from("meeting-pv-sources")
+          .remove([meetingToDelete.source_file_path]);
+      }
       if (editingId === meetingToDelete.id) startNewMeeting();
       setMeetingToDelete(null);
       await loadMeetings();
@@ -677,7 +823,7 @@ export function MeetingsWorkspace() {
     try {
       await downloadMeetingPdf(
         currentMeeting,
-        `cr-${cleanFileName(form.title || "reunion")}-${form.meeting_date}.pdf`,
+        `${cleanFileName(form.title || "compte-rendu") || "compte-rendu"}.pdf`,
         showOncfLogo,
       );
     } catch (exportError) {
@@ -698,7 +844,7 @@ export function MeetingsWorkspace() {
     try {
       await downloadMeetingWord(
         currentMeeting,
-        `cr-${cleanFileName(form.title || "reunion")}-${form.meeting_date}.docx`,
+        `${cleanFileName(form.title || "compte-rendu") || "compte-rendu"}.docx`,
         showOncfLogo,
       );
     } catch (exportError) {
@@ -803,6 +949,7 @@ export function MeetingsWorkspace() {
       {!loading && view === "generator" ? (
         <div className="mt-6 grid items-start gap-6 2xl:grid-cols-[minmax(420px,0.75fr)_minmax(700px,1.25fr)]">
           <div className="space-y-5">
+            <HandwrittenPvImport zones={zones} onApply={applyPvAnalysis} />
             <section className="rounded-2xl border border-[var(--opc-border)] bg-white p-5 shadow-sm">
               <SectionHeading
                 number="1"
@@ -834,6 +981,22 @@ export function MeetingsWorkspace() {
                     {Object.entries(meetingTypeLabels).map(([value, label]) => (
                       <option key={value} value={value}>
                         {label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Zone chantier">
+                  <select
+                    value={form.zone_id ?? ""}
+                    onChange={(event) =>
+                      setForm({ ...form, zone_id: event.target.value || null })
+                    }
+                    className="input"
+                  >
+                    <option value="">Non classée</option>
+                    {zones.map((zone) => (
+                      <option key={zone.id} value={zone.id}>
+                        {zone.code ? `${zone.code} — ` : ""}{zone.name}
                       </option>
                     ))}
                   </select>
@@ -1656,6 +1819,16 @@ export function MeetingsWorkspace() {
                 <option value="draft">Brouillons</option>
                 <option value="finalized">Finalisés</option>
               </select>
+              <select
+                value={archiveZone}
+                onChange={(event) => setArchiveZone(event.target.value)}
+                className="rounded-xl border border-[var(--opc-border)] bg-white px-3 py-2.5 text-sm font-bold"
+              >
+                <option value="all">Toutes les zones</option>
+                {zones.map((zone) => (
+                  <option key={zone.id} value={zone.id}>{zone.name}</option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -1683,6 +1856,11 @@ export function MeetingsWorkspace() {
                         <span className="text-xs font-bold text-slate-400">
                           {meetingTypeLabels[meeting.meeting_type]}
                         </span>
+                        {meeting.zone_id ? (
+                          <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-black uppercase text-blue-700">
+                            {zones.find((zone) => zone.id === meeting.zone_id)?.name || "Zone classée"}
+                          </span>
+                        ) : null}
                       </div>
                       <h3 className="mt-3 truncate text-lg font-black">
                         {meeting.title}
@@ -1723,6 +1901,16 @@ export function MeetingsWorkspace() {
                   </div>
                   <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-xs text-slate-500">
                     <span>{meeting.agenda_points.length} point(s) traité(s)</span>
+                    {meeting.source_file_path && sourcePvUrls[meeting.source_file_path] ? (
+                      <a
+                        href={sourcePvUrls[meeting.source_file_path]}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 font-black text-slate-600 hover:text-[var(--opc-blue)]"
+                      >
+                        <FileUp className="h-3.5 w-3.5" /> PV original
+                      </a>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => openMeeting(meeting)}
