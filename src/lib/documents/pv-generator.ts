@@ -132,6 +132,53 @@ export function downloadGeneratedFile(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export async function prepareOriginalPvScan(file: File) {
+  if (file.type === "application/pdf") return file as Blob;
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Le scan original doit être un PDF, JPG ou PNG.");
+  }
+  const { jsPDF } = await import("jspdf");
+  const bitmap = await createImageBitmap(file);
+  try {
+    const landscape = bitmap.width > bitmap.height;
+    const pdf = new jsPDF({
+      orientation: landscape ? "landscape" : "portrait",
+      unit: "mm",
+      format: "a4",
+      compress: true,
+    });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 6;
+    const ratio = Math.min(
+      (pageWidth - margin * 2) / bitmap.width,
+      (pageHeight - margin * 2) / bitmap.height,
+    );
+    const imageWidth = bitmap.width * ratio;
+    const imageHeight = bitmap.height * ratio;
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Conversion du scan original impossible.");
+    context.drawImage(bitmap, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.94);
+    pdf.addImage(
+      dataUrl,
+      "JPEG",
+      (pageWidth - imageWidth) / 2,
+      (pageHeight - imageHeight) / 2,
+      imageWidth,
+      imageHeight,
+      undefined,
+      "FAST",
+    );
+    return pdf.output("blob");
+  } finally {
+    bitmap.close();
+  }
+}
+
 export async function generatePvPdfBlob(pv: GeneratedPv) {
   const [{ jsPDF }, autoTableModule] = await Promise.all([
     import("jspdf"),

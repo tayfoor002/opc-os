@@ -85,6 +85,8 @@ function subcategoryLabel(value: string | null) {
       installation_poste: "Installation poste",
       installation_campagne: "Installation campagne",
       vt: "Vérification technique",
+      pv_reunion: "PV généré",
+      pv_scan_original: "Scan original",
     }[value] ?? value
   );
 }

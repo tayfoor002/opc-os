@@ -5,10 +5,13 @@ import {
   Download,
   Eye,
   EyeOff,
+  FileScan,
   FileText,
   Loader2,
   PenLine,
   Sparkles,
+  Upload,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -16,6 +19,7 @@ import {
   downloadGeneratedFile,
   generatePvPdfBlob,
   generatePvWordBlob,
+  prepareOriginalPvScan,
   safePvFileName,
   type GeneratedPv,
 } from "@/lib/documents/pv-generator";
@@ -54,6 +58,7 @@ export function DocumentsPvGenerator({
   const [classification, setClassification] = useState("Coordination");
   const [issuerCompany, setIssuerCompany] = useState("ALSTOM");
   const [text, setText] = useState("");
+  const [originalScan, setOriginalScan] = useState<File | null>(null);
   const [dateOverride, setDateOverride] = useState("");
   const [objectiveOverride, setObjectiveOverride] = useState("");
   const [showOncfLogo, setShowOncfLogo] = useState(true);
@@ -71,6 +76,7 @@ export function DocumentsPvGenerator({
     word: Blob;
     fileBase: string;
     documentId: string;
+    original?: Blob;
   } | null>(null);
   const detectedPv = useMemo(() => parsePastedPv(text, ""), [text]);
   const pvDate = dateOverride || detectedPv.meeting_date || today();
@@ -101,6 +107,23 @@ export function DocumentsPvGenerator({
     setError("");
   }
 
+  function chooseOriginalScan(file: File | null) {
+    invalidate();
+    if (!file) {
+      setOriginalScan(null);
+      return;
+    }
+    if (!["application/pdf", "image/jpeg", "image/png"].includes(file.type)) {
+      setError("Format du scan original accepté : PDF, JPG ou PNG.");
+      return;
+    }
+    if (file.size > 45 * 1024 * 1024) {
+      setError("Le scan original doit faire moins de 45 Mo.");
+      return;
+    }
+    setOriginalScan(file);
+  }
+
   async function generateAndArchive() {
     if (!projectId) {
       setError("Sélectionnez le projet du PV.");
@@ -119,6 +142,7 @@ export function DocumentsPvGenerator({
     setGenerating(true);
     setError("");
     const documentId = crypto.randomUUID();
+    const originalDocumentId = originalScan ? crypto.randomUUID() : null;
     const parsed = parsePastedPv(text, automaticTitle);
     const date = pvDate;
     const reference = `PV-${date.replaceAll("-", "")}-${documentId.slice(0, 6).toUpperCase()}`;
@@ -142,38 +166,73 @@ export function DocumentsPvGenerator({
     };
     const fileBase = safePvFileName(pv.title);
     const storagePath = `${projectId}/${documentId}/${fileBase}.pdf`;
+    const originalStoragePath = originalDocumentId
+      ? `${projectId}/${originalDocumentId}/${fileBase}-scan-original.pdf`
+      : null;
     try {
-      const [pdf, word] = await Promise.all([
+      const [pdf, word, original] = await Promise.all([
         generatePvPdfBlob(pv),
         generatePvWordBlob(pv),
+        originalScan ? prepareOriginalPvScan(originalScan) : Promise.resolve(undefined),
       ]);
       const upload = await supabase.storage.from("documents").upload(storagePath, pdf, {
         contentType: "application/pdf",
         upsert: false,
       });
       if (upload.error) throw new Error(`Archivage du PDF impossible : ${upload.error.message}`);
-      const insert = await supabase.from("documents").insert({
-        id: documentId,
+      if (original && originalStoragePath) {
+        const originalUpload = await supabase.storage
+          .from("documents")
+          .upload(originalStoragePath, original, {
+            contentType: "application/pdf",
+            upsert: false,
+          });
+        if (originalUpload.error) {
+          await supabase.storage.from("documents").remove([storagePath]);
+          throw new Error(`Archivage du scan original impossible : ${originalUpload.error.message}`);
+        }
+      }
+      const sharedMetadata = {
         project_id: projectId,
         zone_id: zoneId || null,
-        title: pv.title,
-        reference,
         revision: "00",
         status: "Finalisé",
         category: "PV",
-        document_type: "pv",
-        document_subcategory: "pv_reunion",
-        execution_status: "not_applicable",
+        document_type: "pv" as const,
+        execution_status: "not_applicable" as const,
         company: issuerCompany,
-        comments: `PV généré automatiquement depuis un texte digitalisé. Classement : ${classification}.`,
         document_date: date,
-        file_url: storagePath,
-      });
+      };
+      const documentRows = [
+        {
+          id: documentId,
+          ...sharedMetadata,
+          title: `${pv.title} — PV généré`,
+          reference,
+          document_subcategory: "pv_reunion",
+          comments: `PV final généré automatiquement depuis un texte digitalisé. Classement : ${classification}.`,
+          file_url: storagePath,
+        },
+        ...(originalDocumentId && originalStoragePath
+          ? [{
+              id: originalDocumentId,
+              ...sharedMetadata,
+              title: `${pv.title} — Scan original`,
+              reference: `${reference}-ORG`,
+              document_subcategory: "pv_scan_original",
+              comments: `Scan original associé au PV ${reference}. Fichier source : ${originalScan?.name ?? ""}.`,
+              file_url: originalStoragePath,
+            }]
+          : []),
+      ];
+      const insert = await supabase.from("documents").insert(documentRows);
       if (insert.error) {
-        await supabase.storage.from("documents").remove([storagePath]);
+        await supabase.storage
+          .from("documents")
+          .remove([storagePath, originalStoragePath].filter((path): path is string => Boolean(path)));
         throw new Error(`Classement dans Documents impossible : ${insert.error.message}`);
       }
-      setGenerated({ pdf, word, fileBase, documentId });
+      setGenerated({ pdf, word, fileBase, documentId, original });
     } catch (generationError) {
       setError(generationError instanceof Error ? generationError.message : "Génération du PV impossible.");
     } finally {
@@ -223,6 +282,29 @@ export function DocumentsPvGenerator({
           Texte digitalisé complet
           <textarea rows={16} value={text} onChange={(event) => { setText(event.target.value); setDateOverride(""); setObjectiveOverride(""); invalidate(); }} className="input mt-2 resize-y whitespace-pre-wrap normal-case leading-relaxed" placeholder={"Collez ici le texte complet du PV…\n\nDate : 20/08/2026\nLieu : Chantier\nObjet : Coordination des travaux\n\nParticipants :\n- Nom — Société — Fonction\n\nPoints traités :\n1. Avancement des travaux…"} />
         </label>
+        <section className="rounded-2xl border border-cyan-200 bg-cyan-50/60 p-4">
+          <div className="flex items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-cyan-700 shadow-sm">
+              <FileScan className="h-5 w-5" />
+            </span>
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">Scan original du PV — facultatif</h3>
+              <p className="mt-1 text-xs text-slate-500">Il sera classé à côté du PV généré dans Documents → PV. Les images sont converties automatiquement en PDF.</p>
+            </div>
+          </div>
+          <div className="relative mt-4 rounded-xl border-2 border-dashed border-cyan-200 bg-white">
+            <label className="flex cursor-pointer items-center justify-center gap-3 px-4 py-5 pr-12 text-sm font-black text-slate-700">
+              <Upload className="h-5 w-5 text-cyan-700" />
+              {originalScan ? originalScan.name : "Choisir le scan original (PDF, JPG ou PNG)"}
+              <input type="file" hidden accept="application/pdf,image/jpeg,image/png" onChange={(event) => chooseOriginalScan(event.target.files?.[0] ?? null)} />
+            </label>
+            {originalScan ? (
+              <button type="button" onClick={() => chooseOriginalScan(null)} className="absolute right-3 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:bg-slate-100" aria-label="Retirer le scan original">
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
+        </section>
         <div className="grid gap-4 rounded-2xl border border-blue-200 bg-blue-50/70 p-4 md:grid-cols-[190px_1fr]">
           <label className="text-xs font-black uppercase tracking-wide text-slate-500">
             Date détectée
@@ -275,10 +357,11 @@ export function DocumentsPvGenerator({
           </button>
         ) : (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-            <p className="flex items-center gap-2 text-sm font-black text-emerald-800"><Archive className="h-5 w-5" /> PV généré et classé dans Documents → PV</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <p className="flex items-center gap-2 text-sm font-black text-emerald-800"><Archive className="h-5 w-5" /> {generated.original ? "PV généré et scan original classés dans Documents → PV" : "PV généré et classé dans Documents → PV"}</p>
+            <div className={`mt-4 grid gap-3 sm:grid-cols-2 ${generated.original ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
               <button type="button" onClick={() => downloadGeneratedFile(generated.pdf, `${generated.fileBase}.pdf`)} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--opc-red)] px-4 text-sm font-black text-white"><Download className="h-4 w-4" /> Télécharger PDF</button>
               <button type="button" onClick={() => downloadGeneratedFile(generated.word, `${generated.fileBase}.docx`)} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 text-sm font-black text-white"><Download className="h-4 w-4" /> Télécharger Word</button>
+              {generated.original ? <button type="button" onClick={() => downloadGeneratedFile(generated.original!, `${generated.fileBase}-scan-original.pdf`)} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-cyan-700 px-4 text-sm font-black text-white"><FileScan className="h-4 w-4" /> Télécharger l’original</button> : null}
               <button type="button" onClick={onOpenPvLibrary} className="flex h-11 items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-white px-4 text-sm font-black text-emerald-800"><Archive className="h-4 w-4" /> Ouvrir Documents → PV</button>
             </div>
           </div>
