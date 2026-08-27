@@ -304,7 +304,7 @@ export async function generatePvPdfBlob(pv: GeneratedPv) {
   for (const block of sectionLines(pv.introduction)) paragraph(block);
 
   y += 7;
-  addPageIfNeeded(61);
+  addPageIfNeeded(74);
   heading("3. VISA ET SIGNATURES");
   const signatureGap = 4;
   const signatureWidth = (contentWidth - signatureGap * 2) / 3;
@@ -312,7 +312,7 @@ export async function generatePvPdfBlob(pv: GeneratedPv) {
     const x = margin + index * (signatureWidth + signatureGap);
     pdf.setDrawColor(...border);
     pdf.setLineWidth(0.3);
-    pdf.roundedRect(x, y, signatureWidth, 47, 2, 2, "S");
+    pdf.roundedRect(x, y, signatureWidth, 60, 2, 2, "S");
     pdf.setFillColor(...navy);
     pdf.roundedRect(x, y, signatureWidth, 9, 2, 2, "F");
     pdf.rect(x, y + 5, signatureWidth, 4, "F");
@@ -326,9 +326,9 @@ export async function generatePvPdfBlob(pv: GeneratedPv) {
     pdf.text(`Fonction : ${signatory.role || ""}`, x + 3, y + 21);
     pdf.text("Date :", x + 3, y + 27);
     pdf.setTextColor(148, 163, 184);
-    pdf.text("SIGNATURE", x + signatureWidth / 2, y + 38, { align: "center" });
+    pdf.text("SIGNATURE", x + signatureWidth / 2, y + 51, { align: "center" });
   }
-  y += 52;
+  y += 65;
 
   const pageCount = pdf.getNumberOfPages();
   for (let page = 1; page <= pageCount; page += 1) {
@@ -507,7 +507,7 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
                         new Paragraph({ children: [new TextRun({ text: `Nom et prénom : ${signatory.name}`, size: 17, color: "475569" })] }),
                         new Paragraph({ spacing: { before: 80 }, children: [new TextRun({ text: `Fonction : ${signatory.role}`, size: 17, color: "475569" })] }),
                         new Paragraph({ spacing: { before: 80 }, children: [new TextRun({ text: "Date :", size: 17, color: "475569" })] }),
-                        new Paragraph({ spacing: { before: 500, after: 120 }, alignment: AlignmentType.CENTER, children: [new TextRun({ text: "SIGNATURE", bold: true, size: 16, color: "94A3B8" })] }),
+                        new Paragraph({ spacing: { before: 820, after: 160 }, alignment: AlignmentType.CENTER, children: [new TextRun({ text: "SIGNATURE", bold: true, size: 16, color: "94A3B8" })] }),
                       ],
                     }),
                 ),
