@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 90" role="img" aria-labelledby="title">
-  <title id="title">Avanzit</title>
-  <rect width="320" height="90" rx="10" fill="#ffffff"/>
-  <path d="M28 67 60 20l32 47H75L60 44 45 67Z" fill="#172554"/>
-  <path d="M54 55h12l8 12H46Z" fill="#ef2b3b"/>
-  <text x="105" y="61" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="800" letter-spacing="1.5" fill="#172554">AVANZIT</text>
-</svg>

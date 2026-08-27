@@ -31,16 +31,66 @@ async function loadLogo(path: string): Promise<LogoImage> {
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Conversion du logo impossible.");
     context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    const background = [pixels.data[0], pixels.data[1], pixels.data[2], pixels.data[3]];
+    let left = canvas.width;
+    let top = canvas.height;
+    let right = -1;
+    let bottom = -1;
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        const offset = (y * canvas.width + x) * 4;
+        const alpha = pixels.data[offset + 3];
+        const colorDistance =
+          Math.abs(pixels.data[offset] - background[0]) +
+          Math.abs(pixels.data[offset + 1] - background[1]) +
+          Math.abs(pixels.data[offset + 2] - background[2]);
+        const visible = background[3] < 20 ? alpha > 30 : alpha > 30 && colorDistance > 42;
+        if (!visible) continue;
+        left = Math.min(left, x);
+        top = Math.min(top, y);
+        right = Math.max(right, x);
+        bottom = Math.max(bottom, y);
+      }
+    }
+    const hasBounds = right >= left && bottom >= top;
+    const padding = hasBounds
+      ? Math.max(2, Math.round(Math.max(right - left, bottom - top) * 0.015))
+      : 0;
+    const sourceX = hasBounds ? Math.max(0, left - padding) : 0;
+    const sourceY = hasBounds ? Math.max(0, top - padding) : 0;
+    const sourceWidth = hasBounds
+      ? Math.min(canvas.width - sourceX, right - left + 1 + padding * 2)
+      : canvas.width;
+    const sourceHeight = hasBounds
+      ? Math.min(canvas.height - sourceY, bottom - top + 1 + padding * 2)
+      : canvas.height;
+    const cropped = document.createElement("canvas");
+    cropped.width = sourceWidth;
+    cropped.height = sourceHeight;
+    const croppedContext = cropped.getContext("2d");
+    if (!croppedContext) throw new Error("Recadrage du logo impossible.");
+    croppedContext.drawImage(
+      canvas,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      sourceWidth,
+      sourceHeight,
+    );
     const png = await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob(
+      cropped.toBlob(
         (value) => value ? resolve(value) : reject(new Error("Conversion du logo impossible.")),
         "image/png",
       ),
     );
     return {
       bytes: new Uint8Array(await png.arrayBuffer()),
-      width: image.naturalWidth,
-      height: image.naturalHeight,
+      width: sourceWidth,
+      height: sourceHeight,
     };
   } finally {
     URL.revokeObjectURL(url);
@@ -101,7 +151,7 @@ export async function generatePvPdfBlob(pv: GeneratedPv) {
   const [oncfLogo, alstomLogo, avanzitLogo] = await Promise.all([
     pv.show_logos.oncf ? loadLogo("/oncf-logo.png").catch(() => null) : null,
     pv.show_logos.alstom ? loadLogo("/alstom-logo.png").catch(() => null) : null,
-    pv.show_logos.avanzit ? loadLogo("/avanzit-logo.svg").catch(() => null) : null,
+    pv.show_logos.avanzit ? loadLogo("/avanzit-logo.png").catch(() => null) : null,
   ]);
   let y = 31;
 
@@ -160,10 +210,12 @@ export async function generatePvPdfBlob(pv: GeneratedPv) {
       2: { fontStyle: "bold", fillColor: [239, 246, 255], cellWidth: 28 },
     },
     body: [
-      ["Référence", pv.reference, "Date", pv.meeting_date || "—"],
+      ["Date", pv.meeting_date || "", "Classement", pv.classification],
       ["Chantier", pv.project_name, "Entreprise", pv.issuer_company],
-      ["Zone", pv.zone_name || "Non classée", "Classement", pv.classification],
-      ["Lieu", pv.location || "—", "Horaire", [pv.start_time, pv.end_time].filter(Boolean).join(" — ") || "—"],
+      ["Zone", pv.zone_name || "", "Lieu", pv.location || ""],
+      ...([pv.start_time, pv.end_time].some(Boolean)
+        ? [["Horaire", [pv.start_time, pv.end_time].filter(Boolean).join(" — "), "", ""]]
+        : []),
     ],
   });
   y = ((pdf as typeof pdf & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 14;
@@ -239,8 +291,7 @@ export async function generatePvPdfBlob(pv: GeneratedPv) {
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(7.5);
     pdf.setTextColor(...slate);
-    pdf.text(`OPC OS · ${pv.reference}`, margin, height - 8);
-    pdf.text(`Page ${page}/${pageCount}`, width - margin, height - 8, { align: "right" });
+    pdf.text(`Page ${page}/${pageCount}`, width / 2, height - 8, { align: "center" });
   }
   return pdf.output("blob");
 }
@@ -249,7 +300,7 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
   const [oncfLogo, alstomLogo, avanzitLogo] = await Promise.all([
     pv.show_logos.oncf ? loadLogo("/oncf-logo.png").catch(() => null) : null,
     pv.show_logos.alstom ? loadLogo("/alstom-logo.png").catch(() => null) : null,
-    pv.show_logos.avanzit ? loadLogo("/avanzit-logo.svg").catch(() => null) : null,
+    pv.show_logos.avanzit ? loadLogo("/avanzit-logo.png").catch(() => null) : null,
   ]);
   const {
     AlignmentType,
@@ -277,7 +328,7 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
   };
   const cell = (label: string, bold = false) =>
     new TableCell({
-      children: [new Paragraph({ children: [new TextRun({ text: label || "—", bold, size: 18 })] })],
+      children: [new Paragraph({ children: [new TextRun({ text: label, bold, size: 18 })] })],
       shading: bold ? { fill: "EFF6FF" } : undefined,
     });
   const logoCell = (logo: LogoImage | null, fallback: string) => {
@@ -357,7 +408,7 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
               new Paragraph({
                 alignment: AlignmentType.CENTER,
                 children: [
-                  new TextRun({ text: `${pv.reference} · Page `, size: 16, color: "64748B" }),
+                  new TextRun({ text: "Page ", size: 16, color: "64748B" }),
                   new TextRun({ children: [PageNumber.CURRENT], size: 16, color: "64748B" }),
                 ],
               }),
@@ -379,10 +430,12 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
             width: { size: 100, type: WidthType.PERCENTAGE },
             borders,
             rows: [
-              new TableRow({ children: [cell("Référence", true), cell(pv.reference), cell("Date", true), cell(pv.meeting_date)] }),
+              new TableRow({ children: [cell("Date", true), cell(pv.meeting_date), cell("Classement", true), cell(pv.classification)] }),
               new TableRow({ children: [cell("Chantier", true), cell(pv.project_name), cell("Entreprise", true), cell(pv.issuer_company)] }),
-              new TableRow({ children: [cell("Zone", true), cell(pv.zone_name), cell("Classement", true), cell(pv.classification)] }),
-              new TableRow({ children: [cell("Lieu", true), cell(pv.location), cell("Horaire", true), cell([pv.start_time, pv.end_time].filter(Boolean).join(" — "))] }),
+              new TableRow({ children: [cell("Zone", true), cell(pv.zone_name), cell("Lieu", true), cell(pv.location)] }),
+              ...([pv.start_time, pv.end_time].some(Boolean)
+                ? [new TableRow({ children: [cell("Horaire", true), cell([pv.start_time, pv.end_time].filter(Boolean).join(" — ")), cell("", true), cell("")] })]
+                : []),
             ],
           }),
           heading("1. OBJET DU PROCÈS-VERBAL"),

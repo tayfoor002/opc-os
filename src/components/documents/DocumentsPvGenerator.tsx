@@ -129,7 +129,7 @@ export function DocumentsPvGenerator({
       objective: pvObjective,
       title: `${displayDate(date)} — ${pvObjective}`,
       reference,
-      zone_name: zone?.name ?? "Non classée",
+      zone_name: zone?.name ?? "",
       classification,
       project_name: projects.find((project) => project.id === projectId)?.name ?? "Projet PDD",
       issuer_company: issuerCompany,
