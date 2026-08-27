@@ -21,7 +21,7 @@ export type PastedPvDocument = {
 
 const DATE_PATTERN = /\b(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})\b/;
 const FIELD_PATTERN =
-  /^\s*(date|lieu|objet|heure|horaire|prochaine\s+r[ée]union)\s*[:\-]\s*(.+)$/i;
+  /^\s*(date(?:\s+du\s+pv)?|lieu|objet(?:\s+du\s+pv|\s+de\s+la\s+r[ée]union)?|heure|horaire|prochaine\s+r[ée]union)\s*[:\-]\s*(.+)$/i;
 const SECTION_PATTERN =
   /^\s*(participants?|pr[ée]sents?|ordre\s+du\s+jour|points?\s+trait[ée]s?|d[ée]roulement|discussions?|d[ée]cisions?|actions?|observations?|notes?|conclusion)\s*:?[\s]*$/i;
 
@@ -83,6 +83,7 @@ export function parsePastedPv(
   let location = "";
   let objective = "";
   let nextMeetingDate = "";
+  let pendingField: "objective" | "date" | "location" | "" = "";
   let activeSection = "";
   const participants: PastedPvDocument["participants"] = [];
   const agendaLines: string[] = [];
@@ -92,6 +93,27 @@ export function parsePastedPv(
   for (const originalLine of lines) {
     const line = cleanLine(originalLine);
     if (!line) continue;
+
+    if (pendingField) {
+      if (pendingField === "objective") objective = line;
+      else if (pendingField === "date") meetingDate = toIsoDate(line);
+      else if (pendingField === "location") location = line;
+      pendingField = "";
+      continue;
+    }
+
+    if (/^\s*objet(?:\s+du\s+pv|\s+de\s+la\s+r[ée]union)?\s*:?[\s]*$/i.test(line)) {
+      pendingField = "objective";
+      continue;
+    }
+    if (/^\s*date(?:\s+du\s+pv)?\s*:?[\s]*$/i.test(line)) {
+      pendingField = "date";
+      continue;
+    }
+    if (/^\s*lieu\s*:?[\s]*$/i.test(line)) {
+      pendingField = "location";
+      continue;
+    }
 
     const section = line.match(SECTION_PATTERN);
     if (section) {
@@ -103,9 +125,9 @@ export function parsePastedPv(
     if (field) {
       const label = field[1].toLocaleLowerCase("fr");
       const value = cleanLine(field[2]);
-      if (label === "date") meetingDate = toIsoDate(value);
+      if (label.startsWith("date")) meetingDate = toIsoDate(value);
       else if (label === "lieu") location = value;
-      else if (label === "objet") objective = value;
+      else if (label.startsWith("objet")) objective = value;
       else if (label.startsWith("prochaine")) nextMeetingDate = toIsoDate(value);
       else if (label === "heure" || label === "horaire") {
         const times = value.match(/\b\d{1,2}(?::|h)\d{2}\b/gi) ?? [];
@@ -136,6 +158,9 @@ export function parsePastedPv(
     meetingDate = toIsoDate(
       nonEmptyLines.find((line) => /\bdate\b/i.test(line)) ?? "",
     );
+  }
+  if (!objective && agendaLines.length) {
+    objective = stripListPrefix(agendaLines[0]);
   }
 
   const pointSources = agendaLines.length ? agendaLines : decisionLines;

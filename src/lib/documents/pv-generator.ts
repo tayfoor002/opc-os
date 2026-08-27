@@ -4,7 +4,53 @@ export type GeneratedPv = PastedPvDocument & {
   reference: string;
   zone_name: string;
   classification: string;
+  project_name: string;
+  issuer_company: string;
+  show_logos: { oncf: boolean; alstom: boolean; avanzit: boolean };
+  signatories: Array<{
+    company: "ONCF" | "ALSTOM" | "AVANZIT";
+    name: string;
+    role: string;
+  }>;
 };
+
+type LogoImage = { bytes: Uint8Array; width: number; height: number };
+
+async function loadLogo(path: string): Promise<LogoImage> {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`Logo indisponible : ${path}`);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Conversion du logo impossible.");
+    context.drawImage(image, 0, 0);
+    const png = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob(
+        (value) => value ? resolve(value) : reject(new Error("Conversion du logo impossible.")),
+        "image/png",
+      ),
+    );
+    return {
+      bytes: new Uint8Array(await png.arrayBuffer()),
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+    };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function fitLogo(logo: LogoImage, maximumWidth: number, maximumHeight: number) {
+  const ratio = Math.min(maximumWidth / logo.width, maximumHeight / logo.height);
+  return { width: logo.width * ratio, height: logo.height * ratio };
+}
 
 function sectionLines(text: string) {
   return text
@@ -47,55 +93,96 @@ export async function generatePvPdfBlob(pv: GeneratedPv) {
   const height = pdf.internal.pageSize.getHeight();
   const margin = 16;
   const contentWidth = width - margin * 2;
-  let y = 18;
+  const navy: [number, number, number] = [11, 39, 72];
+  const blue: [number, number, number] = [0, 80, 164];
+  const red: [number, number, number] = [226, 0, 26];
+  const border: [number, number, number] = [210, 220, 232];
+  const slate: [number, number, number] = [71, 85, 105];
+  const [oncfLogo, alstomLogo, avanzitLogo] = await Promise.all([
+    pv.show_logos.oncf ? loadLogo("/oncf-logo.png").catch(() => null) : null,
+    pv.show_logos.alstom ? loadLogo("/alstom-logo.png").catch(() => null) : null,
+    pv.show_logos.avanzit ? loadLogo("/avanzit-logo.svg").catch(() => null) : null,
+  ]);
+  let y = 31;
 
-  pdf.setFillColor(0, 80, 164);
-  pdf.rect(0, 0, width, 13, "F");
-  pdf.setTextColor(255, 255, 255);
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(8);
-  pdf.text("OPC OS · PROJET PDD", margin, 8.5);
-  pdf.text("DOCUMENT OFFICIEL", width - margin, 8.5, { align: "right" });
+  const placeLogo = (
+    logo: LogoImage | null,
+    centerX: number,
+    maximumWidth: number,
+    maximumHeight: number,
+  ) => {
+    if (!logo) return;
+    const dimensions = fitLogo(logo, maximumWidth, maximumHeight);
+    pdf.addImage(
+      logo.bytes,
+      "PNG",
+      centerX - dimensions.width / 2,
+      7 + (13 - dimensions.height) / 2,
+      dimensions.width,
+      dimensions.height,
+    );
+  };
+  const renderHeader = () => {
+    pdf.setFillColor(...red);
+    pdf.rect(0, 0, width, 3, "F");
+    pdf.setFillColor(255, 255, 255);
+    pdf.rect(0, 3, width, 21, "F");
+    placeLogo(alstomLogo, margin + 22, 38, 12);
+    placeLogo(oncfLogo, width / 2, 29, 13);
+    placeLogo(avanzitLogo, width - margin - 22, 38, 12);
+    pdf.setDrawColor(...border);
+    pdf.line(margin, 24, width - margin, 24);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(6.8);
+    pdf.setTextColor(...slate);
+    pdf.text("MARCHÉ N° 625C07 · PROGRAMME DE DÉVELOPPEMENT", width / 2, 28, { align: "center" });
+    y = 36;
+  };
+  renderHeader();
 
-  pdf.setTextColor(22, 35, 59);
+  pdf.setTextColor(...navy);
   pdf.setFontSize(19);
-  pdf.text("PROCÈS-VERBAL", width / 2, y + 7, { align: "center" });
-  y += 14;
+  pdf.text("PROCÈS-VERBAL", width / 2, y, { align: "center" });
+  y += 9;
   pdf.setFontSize(13);
-  pdf.setTextColor(0, 80, 164);
+  pdf.setTextColor(...blue);
   const titleLines = pdf.splitTextToSize(pv.title.toUpperCase(), contentWidth * 0.9) as string[];
   pdf.text(titleLines, width / 2, y, { align: "center" });
-  y += titleLines.length * 5.5 + 5;
+  y += titleLines.length * 5.5 + 9;
 
   autoTable(pdf, {
     startY: y,
     theme: "grid",
     margin: { left: margin, right: margin },
-    styles: { font: "helvetica", fontSize: 8, cellPadding: 2.3, textColor: [22, 35, 59] },
+    styles: { font: "helvetica", fontSize: 8, cellPadding: 2.8, textColor: navy, lineColor: border },
     columnStyles: {
       0: { fontStyle: "bold", fillColor: [239, 246, 255], cellWidth: 28 },
       2: { fontStyle: "bold", fillColor: [239, 246, 255], cellWidth: 28 },
     },
     body: [
       ["Référence", pv.reference, "Date", pv.meeting_date || "—"],
+      ["Chantier", pv.project_name, "Entreprise", pv.issuer_company],
       ["Zone", pv.zone_name || "Non classée", "Classement", pv.classification],
       ["Lieu", pv.location || "—", "Horaire", [pv.start_time, pv.end_time].filter(Boolean).join(" — ") || "—"],
     ],
   });
-  y = ((pdf as typeof pdf & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 9;
+  y = ((pdf as typeof pdf & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 14;
 
   const addPageIfNeeded = (needed = 18) => {
     if (y + needed <= height - 18) return;
     pdf.addPage();
-    y = 20;
+    renderHeader();
   };
   const heading = (label: string) => {
     addPageIfNeeded(15);
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(11);
-    pdf.setTextColor(0, 80, 164);
+    pdf.setTextColor(...blue);
     pdf.text(label, margin, y);
-    y += 6;
+    pdf.setDrawColor(...red);
+    pdf.setLineWidth(0.7);
+    pdf.line(margin, y + 2, margin + 34, y + 2);
+    y += 8;
   };
   const paragraph = (text: string) => {
     if (!text.trim()) return;
@@ -108,34 +195,69 @@ export async function generatePvPdfBlob(pv: GeneratedPv) {
       pdf.text(line, margin, y);
       y += 4.8;
     }
-    y += 2;
+    y += 4;
   };
 
-  heading("Objet du procès-verbal");
+  heading("1. OBJET DU PROCÈS-VERBAL");
   paragraph(pv.objective || "Procès-verbal de réunion.");
-  heading("Contenu du procès-verbal");
+  y += 5;
+  heading("2. CONTENU DU PROCÈS-VERBAL");
   for (const block of sectionLines(pv.introduction)) paragraph(block);
+
+  y += 7;
+  addPageIfNeeded(61);
+  heading("3. VISA ET SIGNATURES");
+  const signatureGap = 4;
+  const signatureWidth = (contentWidth - signatureGap * 2) / 3;
+  for (const [index, signatory] of pv.signatories.entries()) {
+    const x = margin + index * (signatureWidth + signatureGap);
+    pdf.setDrawColor(...border);
+    pdf.setLineWidth(0.3);
+    pdf.roundedRect(x, y, signatureWidth, 47, 2, 2, "S");
+    pdf.setFillColor(...navy);
+    pdf.roundedRect(x, y, signatureWidth, 9, 2, 2, "F");
+    pdf.rect(x, y + 5, signatureWidth, 4, "F");
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(9);
+    pdf.setTextColor(255, 255, 255);
+    pdf.text(signatory.company, x + signatureWidth / 2, y + 6, { align: "center" });
+    pdf.setFontSize(7.5);
+    pdf.setTextColor(...slate);
+    pdf.text(`Nom et prénom : ${signatory.name || ""}`, x + 3, y + 15);
+    pdf.text(`Fonction : ${signatory.role || ""}`, x + 3, y + 21);
+    pdf.text("Date :", x + 3, y + 27);
+    pdf.setTextColor(148, 163, 184);
+    pdf.text("SIGNATURE", x + signatureWidth / 2, y + 38, { align: "center" });
+  }
+  y += 52;
 
   const pageCount = pdf.getNumberOfPages();
   for (let page = 1; page <= pageCount; page += 1) {
     pdf.setPage(page);
-    pdf.setDrawColor(210, 220, 232);
+    pdf.setDrawColor(...border);
     pdf.line(margin, height - 13, width - margin, height - 13);
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(7.5);
-    pdf.setTextColor(100, 116, 139);
-    pdf.text(`${pv.reference} · Page ${page}/${pageCount}`, width / 2, height - 8, { align: "center" });
+    pdf.setTextColor(...slate);
+    pdf.text(`OPC OS · ${pv.reference}`, margin, height - 8);
+    pdf.text(`Page ${page}/${pageCount}`, width - margin, height - 8, { align: "right" });
   }
   return pdf.output("blob");
 }
 
 export async function generatePvWordBlob(pv: GeneratedPv) {
+  const [oncfLogo, alstomLogo, avanzitLogo] = await Promise.all([
+    pv.show_logos.oncf ? loadLogo("/oncf-logo.png").catch(() => null) : null,
+    pv.show_logos.alstom ? loadLogo("/alstom-logo.png").catch(() => null) : null,
+    pv.show_logos.avanzit ? loadLogo("/avanzit-logo.svg").catch(() => null) : null,
+  ]);
   const {
     AlignmentType,
     BorderStyle,
     Document,
     Footer,
     Header,
+    ImageRun,
     Packer,
     PageNumber,
     Paragraph,
@@ -158,10 +280,34 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
       children: [new Paragraph({ children: [new TextRun({ text: label || "—", bold, size: 18 })] })],
       shading: bold ? { fill: "EFF6FF" } : undefined,
     });
+  const logoCell = (logo: LogoImage | null, fallback: string) => {
+    const maximumWidth = 105;
+    const maximumHeight = 36;
+    const dimensions = logo
+      ? fitLogo(logo, maximumWidth, maximumHeight)
+      : { width: maximumWidth, height: maximumHeight };
+    return new TableCell({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: logo
+            ? [
+                new ImageRun({
+                  data: logo.bytes,
+                  type: "png",
+                  transformation: dimensions,
+                }),
+              ]
+            : [new TextRun({ text: fallback, bold: true, size: 20, color: "0050A4" })],
+        }),
+      ],
+    });
+  };
   const heading = (text: string) =>
     new Paragraph({
-      spacing: { before: 280, after: 100 },
-      children: [new TextRun({ text, bold: true, size: 24, color: "0050A4" })],
+      spacing: { before: 420, after: 160 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: "E2001A" } },
+      children: [new TextRun({ text, bold: true, size: 23, color: "0050A4" })],
     });
   const bodyParagraphs = sectionLines(pv.introduction).map(
     (text) =>
@@ -177,9 +323,30 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
         headers: {
           default: new Header({
             children: [
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                borders: {
+                  top: { style: BorderStyle.NONE },
+                  bottom: { style: BorderStyle.NONE },
+                  left: { style: BorderStyle.NONE },
+                  right: { style: BorderStyle.NONE },
+                  insideHorizontal: { style: BorderStyle.NONE },
+                  insideVertical: { style: BorderStyle.NONE },
+                },
+                rows: [
+                  new TableRow({
+                    children: [
+                      logoCell(alstomLogo, pv.show_logos.alstom ? "ALSTOM" : ""),
+                      logoCell(oncfLogo, pv.show_logos.oncf ? "ONCF" : ""),
+                      logoCell(avanzitLogo, pv.show_logos.avanzit ? "AVANZIT" : ""),
+                    ],
+                  }),
+                ],
+              }),
               new Paragraph({
                 alignment: AlignmentType.CENTER,
-                children: [new TextRun({ text: "OPC OS · PROJET PDD · DOCUMENT OFFICIEL", bold: true, size: 17, color: "0050A4" })],
+                border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: "E2001A" } },
+                children: [new TextRun({ text: "MARCHÉ N° 625C07 · PROGRAMME DE DÉVELOPPEMENT", bold: true, size: 15, color: "64748B" })],
               }),
             ],
           }),
@@ -200,12 +367,12 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
         children: [
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            spacing: { after: 180 },
+            spacing: { before: 220, after: 180 },
             children: [new TextRun({ text: "PROCÈS-VERBAL", bold: true, size: 36, color: "16233B" })],
           }),
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            spacing: { after: 300 },
+            spacing: { after: 420 },
             children: [new TextRun({ text: pv.title.toUpperCase(), bold: true, size: 25, color: "0050A4" })],
           }),
           new Table({
@@ -213,14 +380,40 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
             borders,
             rows: [
               new TableRow({ children: [cell("Référence", true), cell(pv.reference), cell("Date", true), cell(pv.meeting_date)] }),
+              new TableRow({ children: [cell("Chantier", true), cell(pv.project_name), cell("Entreprise", true), cell(pv.issuer_company)] }),
               new TableRow({ children: [cell("Zone", true), cell(pv.zone_name), cell("Classement", true), cell(pv.classification)] }),
               new TableRow({ children: [cell("Lieu", true), cell(pv.location), cell("Horaire", true), cell([pv.start_time, pv.end_time].filter(Boolean).join(" — "))] }),
             ],
           }),
-          heading("1. Objet du procès-verbal"),
-          new Paragraph({ children: [new TextRun({ text: pv.objective || "Procès-verbal de réunion.", size: 20 })] }),
-          heading("2. Contenu du procès-verbal"),
+          heading("1. OBJET DU PROCÈS-VERBAL"),
+          new Paragraph({ spacing: { after: 260, line: 320 }, children: [new TextRun({ text: pv.objective || "Procès-verbal de réunion.", size: 20 })] }),
+          heading("2. CONTENU DU PROCÈS-VERBAL"),
           ...bodyParagraphs,
+          heading("3. VISA ET SIGNATURES"),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            borders,
+            rows: [
+              new TableRow({
+                children: pv.signatories.map(
+                  (signatory) =>
+                    new TableCell({
+                      children: [
+                        new Paragraph({
+                          alignment: AlignmentType.CENTER,
+                          spacing: { before: 100, after: 180 },
+                          children: [new TextRun({ text: signatory.company, bold: true, size: 23, color: "0050A4" })],
+                        }),
+                        new Paragraph({ children: [new TextRun({ text: `Nom et prénom : ${signatory.name}`, size: 17, color: "475569" })] }),
+                        new Paragraph({ spacing: { before: 80 }, children: [new TextRun({ text: `Fonction : ${signatory.role}`, size: 17, color: "475569" })] }),
+                        new Paragraph({ spacing: { before: 80 }, children: [new TextRun({ text: "Date :", size: 17, color: "475569" })] }),
+                        new Paragraph({ spacing: { before: 500, after: 120 }, alignment: AlignmentType.CENTER, children: [new TextRun({ text: "SIGNATURE", bold: true, size: 16, color: "94A3B8" })] }),
+                      ],
+                    }),
+                ),
+              }),
+            ],
+          }),
         ],
       },
     ],

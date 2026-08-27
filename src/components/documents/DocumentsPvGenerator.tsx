@@ -1,6 +1,15 @@
 "use client";
 
-import { Archive, Download, FileText, Loader2, Sparkles } from "lucide-react";
+import {
+  Archive,
+  Download,
+  Eye,
+  EyeOff,
+  FileText,
+  Loader2,
+  PenLine,
+  Sparkles,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -17,6 +26,18 @@ type Project = { id: string; code: string | null; name: string };
 type Zone = { id: string; project_id: string; code: string | null; name: string };
 
 const classifications = ["Coordination", "Chantier", "Technique", "Sécurité / EHS", "Client", "Autre"];
+const companies = ["ALSTOM", "AVANZIT", "ONCF", "Groupement projet"];
+
+type Signatory = { company: "ONCF" | "ALSTOM" | "AVANZIT"; name: string; role: string };
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function displayDate(value: string) {
+  const [year, month, day] = value.split("-");
+  return year && month && day ? `${day}-${month}-${year}` : value;
+}
 
 export function DocumentsPvGenerator({
   projects,
@@ -30,9 +51,19 @@ export function DocumentsPvGenerator({
   const [projectId, setProjectId] = useState(defaultProject);
   const [zones, setZones] = useState<Zone[]>([]);
   const [zoneId, setZoneId] = useState("");
-  const [title, setTitle] = useState("");
   const [classification, setClassification] = useState("Coordination");
+  const [issuerCompany, setIssuerCompany] = useState("ALSTOM");
   const [text, setText] = useState("");
+  const [dateOverride, setDateOverride] = useState("");
+  const [objectiveOverride, setObjectiveOverride] = useState("");
+  const [showOncfLogo, setShowOncfLogo] = useState(true);
+  const [showAlstomLogo, setShowAlstomLogo] = useState(true);
+  const [showAvanzitLogo, setShowAvanzitLogo] = useState(true);
+  const [signatories, setSignatories] = useState<Signatory[]>([
+    { company: "ONCF", name: "", role: "" },
+    { company: "ALSTOM", name: "", role: "" },
+    { company: "AVANZIT", name: "", role: "" },
+  ]);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
   const [generated, setGenerated] = useState<{
@@ -41,6 +72,10 @@ export function DocumentsPvGenerator({
     fileBase: string;
     documentId: string;
   } | null>(null);
+  const detectedPv = useMemo(() => parsePastedPv(text, ""), [text]);
+  const pvDate = dateOverride || detectedPv.meeting_date || today();
+  const pvObjective = objectiveOverride || detectedPv.objective;
+  const automaticTitle = `${displayDate(pvDate)} — ${pvObjective || "Objet du PV à détecter"}`;
 
   useEffect(() => {
     let active = true;
@@ -71,27 +106,39 @@ export function DocumentsPvGenerator({
       setError("Sélectionnez le projet du PV.");
       return;
     }
-    if (!title.trim()) {
-      setError("Saisissez le titre du PV.");
-      return;
-    }
     if (!text.trim()) {
       setError("Collez le texte digitalisé complet du PV.");
+      return;
+    }
+    if (!pvObjective.trim()) {
+      setError(
+        "Objet du PV non détecté. Ajoutez une ligne « Objet : ... » dans le texte ou renseignez le champ Objet détecté.",
+      );
       return;
     }
     setGenerating(true);
     setError("");
     const documentId = crypto.randomUUID();
-    const parsed = parsePastedPv(text, title);
-    const date = parsed.meeting_date || new Date().toISOString().slice(0, 10);
+    const parsed = parsePastedPv(text, automaticTitle);
+    const date = pvDate;
     const reference = `PV-${date.replaceAll("-", "")}-${documentId.slice(0, 6).toUpperCase()}`;
     const zone = zones.find((item) => item.id === zoneId);
     const pv: GeneratedPv = {
       ...parsed,
       meeting_date: date,
+      objective: pvObjective,
+      title: `${displayDate(date)} — ${pvObjective}`,
       reference,
       zone_name: zone?.name ?? "Non classée",
       classification,
+      project_name: projects.find((project) => project.id === projectId)?.name ?? "Projet PDD",
+      issuer_company: issuerCompany,
+      show_logos: {
+        oncf: showOncfLogo,
+        alstom: showAlstomLogo,
+        avanzit: showAvanzitLogo,
+      },
+      signatories,
     };
     const fileBase = safePvFileName(pv.title);
     const storagePath = `${projectId}/${documentId}/${fileBase}.pdf`;
@@ -117,7 +164,7 @@ export function DocumentsPvGenerator({
         document_type: "pv",
         document_subcategory: "pv_reunion",
         execution_status: "not_applicable",
-        company: "OPC OS",
+        company: issuerCompany,
         comments: `PV généré automatiquement depuis un texte digitalisé. Classement : ${classification}.`,
         document_date: date,
         file_url: storagePath,
@@ -136,12 +183,12 @@ export function DocumentsPvGenerator({
 
   return (
     <section className="rounded-2xl border border-emerald-200 bg-white shadow-sm">
-      <div className="rounded-t-2xl bg-emerald-700 px-6 py-5 text-white">
+      <div className="rounded-t-2xl bg-gradient-to-r from-[#0b2748] via-[#0050a4] to-[#0b2748] px-6 py-5 text-white">
         <h2 className="flex items-center gap-2 text-xl font-black">
           <FileText className="h-5 w-5" /> Générateur de procès-verbal
         </h2>
         <p className="mt-1 text-sm font-semibold text-emerald-100">
-          Générateur indépendant · classement automatique dans Documents → PV
+          Modèle professionnel ALSTOM · classement automatique dans Documents → PV
         </p>
       </div>
       <div className="space-y-5 p-6">
@@ -159,22 +206,67 @@ export function DocumentsPvGenerator({
               {zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.code ? `${zone.code} — ` : ""}{zone.name}</option>)}
             </select>
           </label>
-          <label className="text-xs font-black uppercase tracking-wide text-slate-500 md:col-span-2">
-            Titre du PV
-            <input value={title} onChange={(event) => { setTitle(event.target.value); invalidate(); }} className="input mt-2 normal-case" placeholder="PV de coordination — Zone A" />
-            <span className="mt-1 block text-[11px] font-medium normal-case text-slate-400">Le titre devient le nom des fichiers PDF et Word.</span>
-          </label>
           <label className="text-xs font-black uppercase tracking-wide text-slate-500">
             Classement
             <select value={classification} onChange={(event) => { setClassification(event.target.value); invalidate(); }} className="input mt-2 normal-case">
               {classifications.map((item) => <option key={item}>{item}</option>)}
             </select>
           </label>
+          <label className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Entreprise émettrice
+            <select value={issuerCompany} onChange={(event) => { setIssuerCompany(event.target.value); invalidate(); }} className="input mt-2 normal-case">
+              {companies.map((item) => <option key={item}>{item}</option>)}
+            </select>
+          </label>
         </div>
         <label className="block text-xs font-black uppercase tracking-wide text-slate-500">
           Texte digitalisé complet
-          <textarea rows={16} value={text} onChange={(event) => { setText(event.target.value); invalidate(); }} className="input mt-2 resize-y whitespace-pre-wrap normal-case leading-relaxed" placeholder={"Collez ici le texte complet du PV…\n\nDate : 20/08/2026\nLieu : Chantier\nObjet : Coordination des travaux\n\nParticipants :\n- Nom — Société — Fonction\n\nPoints traités :\n1. Avancement des travaux…"} />
+          <textarea rows={16} value={text} onChange={(event) => { setText(event.target.value); setDateOverride(""); setObjectiveOverride(""); invalidate(); }} className="input mt-2 resize-y whitespace-pre-wrap normal-case leading-relaxed" placeholder={"Collez ici le texte complet du PV…\n\nDate : 20/08/2026\nLieu : Chantier\nObjet : Coordination des travaux\n\nParticipants :\n- Nom — Société — Fonction\n\nPoints traités :\n1. Avancement des travaux…"} />
         </label>
+        <div className="grid gap-4 rounded-2xl border border-blue-200 bg-blue-50/70 p-4 md:grid-cols-[190px_1fr]">
+          <label className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Date détectée
+            <input type="date" value={pvDate} onChange={(event) => { setDateOverride(event.target.value); invalidate(); }} className="input mt-2 bg-white normal-case" />
+          </label>
+          <label className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Objet détecté — corrigeable
+            <input value={pvObjective} onChange={(event) => { setObjectiveOverride(event.target.value); invalidate(); }} className="input mt-2 bg-white normal-case" placeholder="Objet du procès-verbal" />
+          </label>
+          <div className="md:col-span-2">
+            <p className="text-[11px] font-black uppercase tracking-wide text-[var(--opc-blue)]">Titre généré automatiquement</p>
+            <p className="mt-1 text-base font-black text-slate-800">{automaticTitle}</p>
+          </div>
+        </div>
+
+        <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">Logos du document</h3>
+          <p className="mt-1 text-xs text-slate-500">Affichez ou masquez chaque logo dans le PDF et le Word.</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            {[
+              ["ONCF", showOncfLogo, () => setShowOncfLogo((value) => !value)],
+              ["ALSTOM", showAlstomLogo, () => setShowAlstomLogo((value) => !value)],
+              ["AVANZIT", showAvanzitLogo, () => setShowAvanzitLogo((value) => !value)],
+            ].map(([label, visible, toggle]) => (
+              <button key={label as string} type="button" onClick={() => { (toggle as () => void)(); invalidate(); }} className={`flex h-11 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-black ${visible ? "border-blue-300 bg-white text-[var(--opc-blue)]" : "border-slate-200 bg-slate-100 text-slate-500"}`}>
+                {visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />} Logo {label as string}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-slate-700"><PenLine className="h-4 w-4 text-[var(--opc-red)]" /> Visa et signatures</h3>
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            {signatories.map((signatory, index) => (
+              <div key={signatory.company} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-center text-sm font-black text-[var(--opc-blue)]">{signatory.company}</p>
+                <input value={signatory.name} onChange={(event) => { setSignatories((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item)); invalidate(); }} className="input mt-3 bg-white" placeholder="Nom et prénom" />
+                <input value={signatory.role} onChange={(event) => { setSignatories((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, role: event.target.value } : item)); invalidate(); }} className="input mt-2 bg-white" placeholder="Fonction" />
+                <div className="mt-3 grid h-16 place-items-center rounded-lg border border-dashed border-slate-300 bg-white text-xs font-bold text-slate-400">Espace signature</div>
+              </div>
+            ))}
+          </div>
+        </section>
         {error ? <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</p> : null}
         {!generated ? (
           <button type="button" disabled={generating} onClick={() => void generateAndArchive()} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 text-sm font-black text-white disabled:cursor-wait disabled:opacity-60">
