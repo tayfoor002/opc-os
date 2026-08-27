@@ -44,6 +44,7 @@ import type {
 } from "@/types/meeting";
 import { ConfirmDeleteDialog } from "@/components/ui/ConfirmDeleteDialog";
 import { HandwrittenPvImport } from "@/components/meetings/HandwrittenPvImport";
+import { PastedPvImport } from "@/components/meetings/PastedPvImport";
 import type { PvOcrResult } from "@/lib/meetings/pv-ocr";
 
 const meetingTypeLabels: Record<MeetingType, string> = {
@@ -413,6 +414,50 @@ export function MeetingsWorkspace() {
     setPendingPvSource(sourceFile);
     setNotice(
       `PV lu et classé. Fiabilité estimée : ${Math.round(result.confidence * 100)} %. Vérifiez les passages signalés avant d’archiver.`,
+    );
+  }
+
+  function applyPastedPv(
+    result: PvOcrResult,
+    zoneId: string,
+    classification: MeetingType,
+  ) {
+    setForm((current) => ({
+      ...current,
+      zone_id: zoneId,
+      title: result.title.trim() || "Procès-verbal de réunion",
+      meeting_date: result.meeting_date || current.meeting_date,
+      start_time: result.start_time || "",
+      end_time: result.end_time || "",
+      location: result.location || "",
+      meeting_type: classification,
+      objective: result.objective || "",
+      introduction: result.introduction,
+      participants: result.participants.map((participant) => ({
+        id: crypto.randomUUID(),
+        collaborator_id: null,
+        name: participant.name,
+        company: participant.company,
+        role: participant.role,
+        manual: true,
+      })),
+      agenda_points: result.agenda_points.length
+        ? result.agenda_points.map((point) => ({
+            id: crypto.randomUUID(),
+            ...point,
+          }))
+        : [newPoint()],
+      general_notes: result.general_notes || "",
+      next_meeting_date: result.next_meeting_date || "",
+      source_file_path: null,
+      source_original_name: null,
+      source_mime_type: null,
+      ocr_confidence: null,
+      ocr_warnings: [],
+    }));
+    setPendingPvSource(null);
+    setNotice(
+      "Texte du PV intégré. Vérifiez l’aperçu, puis téléchargez le PDF ou le fichier Word.",
     );
   }
 
@@ -949,6 +994,7 @@ export function MeetingsWorkspace() {
       {!loading && view === "generator" ? (
         <div className="mt-6 grid items-start gap-6 2xl:grid-cols-[minmax(420px,0.75fr)_minmax(700px,1.25fr)]">
           <div className="space-y-5">
+            <PastedPvImport zones={zones} onApply={applyPastedPv} />
             <HandwrittenPvImport zones={zones} onApply={applyPvAnalysis} />
             <section className="rounded-2xl border border-[var(--opc-border)] bg-white p-5 shadow-sm">
               <SectionHeading
