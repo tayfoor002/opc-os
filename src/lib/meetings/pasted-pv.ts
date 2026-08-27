@@ -1,6 +1,23 @@
-import type { MeetingType } from "@/types/meeting";
-
-import type { PvOcrResult } from "@/lib/meetings/pv-ocr";
+export type PastedPvDocument = {
+  title: string;
+  meeting_date: string;
+  start_time: string;
+  end_time: string;
+  location: string;
+  objective: string;
+  introduction: string;
+  participants: Array<{ name: string; company: string; role: string }>;
+  agenda_points: Array<{
+    subject: string;
+    discussion: string;
+    decision: string;
+    owner: string;
+    due_date: string;
+    status: "open" | "done";
+  }>;
+  general_notes: string;
+  next_meeting_date: string;
+};
 
 const DATE_PATTERN = /\b(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})\b/;
 const FIELD_PATTERN =
@@ -55,8 +72,7 @@ function sectionName(value: string) {
 export function parsePastedPv(
   rawText: string,
   requestedTitle: string,
-  classification: MeetingType,
-): PvOcrResult {
+): PastedPvDocument {
   const normalizedText = rawText.replace(/\r\n?/g, "\n").trim();
   const lines = normalizedText.split("\n");
   const nonEmptyLines = lines.map(cleanLine).filter(Boolean);
@@ -68,7 +84,7 @@ export function parsePastedPv(
   let objective = "";
   let nextMeetingDate = "";
   let activeSection = "";
-  const participants: PvOcrResult["participants"] = [];
+  const participants: PastedPvDocument["participants"] = [];
   const agendaLines: string[] = [];
   const decisionLines: string[] = [];
   const noteLines: string[] = [];
@@ -141,16 +157,11 @@ export function parsePastedPv(
     start_time: startTime,
     end_time: endTime,
     location,
-    meeting_type: classification,
     objective,
     introduction: normalizedText,
     participants,
     agenda_points: agendaPoints,
     general_notes: noteLines.join("\n"),
     next_meeting_date: nextMeetingDate,
-    confidence: 1,
-    warnings: [],
-    uncertain_fragments: [],
-    page_count: 0,
   };
 }

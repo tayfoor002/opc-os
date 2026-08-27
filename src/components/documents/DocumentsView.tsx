@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  FileText,
   FileSpreadsheet,
   FolderOpen,
   Loader2,
@@ -18,6 +19,7 @@ import { DocumentTable } from "./DocumentTable";
 import { DocumentUpload } from "./DocumentUpload";
 import { DocumentMetadataSync } from "./DocumentMetadataSync";
 import { ProcedureRegister } from "./ProcedureRegister";
+import { DocumentsPvGenerator } from "./DocumentsPvGenerator";
 
 import {
   Dialog,
@@ -49,7 +51,7 @@ export function DocumentsView({ documents, projects }: Props) {
     () => new Set(),
   );
   const [isDeleting, startDeleting] = useTransition();
-  const [view, setView] = useState<"library" | "procedure-register">("library");
+  const [view, setView] = useState<"library" | "pv-generator" | "procedure-register">("library");
   const [typeFilter, setTypeFilter] = useState("all");
   const [subcategoryFilter, setSubcategoryFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -132,6 +134,18 @@ export function DocumentsView({ documents, projects }: Props) {
       <div className="mb-5 inline-flex rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
         <button
           type="button"
+          onClick={() => setView("pv-generator")}
+          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black ${
+            view === "pv-generator"
+              ? "bg-emerald-700 text-white"
+              : "text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <FileText className="h-4 w-4" />
+          Générateur PV
+        </button>
+        <button
+          type="button"
           onClick={() => setView("library")}
           className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black ${
             view === "library"
@@ -156,7 +170,17 @@ export function DocumentsView({ documents, projects }: Props) {
         </button>
       </div>
 
-      {view === "procedure-register" ? (
+      {view === "pv-generator" ? (
+        <DocumentsPvGenerator
+          projects={projects}
+          onOpenPvLibrary={() => {
+            setTypeFilter("pv");
+            setSubcategoryFilter("all");
+            setView("library");
+            router.refresh();
+          }}
+        />
+      ) : view === "procedure-register" ? (
         <ProcedureRegister documents={documents} projects={projects} />
       ) : (
         <>
