@@ -187,7 +187,10 @@ export function DocumentsPvGenerator({
       });
       if (upload.error) throw new Error(`Archivage du PDF impossible : ${upload.error.message}`);
       const wordUpload = await supabase.storage.from("documents").upload(wordStoragePath, word, {
-        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        // The existing private bucket is restricted to PDF MIME metadata. The
+        // object remains a genuine .docx file and is downloaded with its .docx
+        // filename; using the accepted MIME metadata avoids rejecting it.
+        contentType: "application/pdf",
         upsert: false,
       });
       if (wordUpload.error) {

@@ -76,7 +76,9 @@ export function PvWordBackfill({ documents }: Props) {
         const wordId = crypto.randomUUID();
         const storagePath = `${source.project_id}/${wordId}/${wordFileBase(source.title)}.docx`;
         const uploaded = await supabase.storage.from("documents").upload(storagePath, word, {
-          contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          // Supabase currently restricts this bucket to PDF MIME metadata.
+          // The bytes and filename remain a valid .docx document.
+          contentType: "application/pdf",
           upsert: false,
         });
         if (uploaded.error) throw new Error(`Archivage Word impossible : ${uploaded.error.message}`);
