@@ -59,6 +59,7 @@ export function DocumentsPvGenerator({
   const [issuerCompany, setIssuerCompany] = useState("ALSTOM");
   const [text, setText] = useState("");
   const [originalScan, setOriginalScan] = useState<File | null>(null);
+  const [draggingOriginal, setDraggingOriginal] = useState(false);
   const [dateOverride, setDateOverride] = useState("");
   const [objectiveOverride, setObjectiveOverride] = useState("");
   const [showOncfLogo, setShowOncfLogo] = useState(true);
@@ -295,10 +296,40 @@ export function DocumentsPvGenerator({
               <p className="mt-1 text-xs text-slate-500">Il sera classé à côté du PV généré dans Documents → PV. Les images sont converties automatiquement en PDF.</p>
             </div>
           </div>
-          <div className="relative mt-4 rounded-xl border-2 border-dashed border-cyan-200 bg-white">
+          <div
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setDraggingOriginal(true);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+              setDraggingOriginal(true);
+            }}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                setDraggingOriginal(false);
+              }
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDraggingOriginal(false);
+              chooseOriginalScan(event.dataTransfer.files[0] ?? null);
+            }}
+            className={`relative mt-4 rounded-xl border-2 border-dashed transition ${
+              draggingOriginal
+                ? "scale-[1.01] border-cyan-600 bg-cyan-100 shadow-md"
+                : "border-cyan-200 bg-white hover:border-cyan-400 hover:bg-cyan-50"
+            }`}
+          >
             <label className="flex cursor-pointer items-center justify-center gap-3 px-4 py-5 pr-12 text-sm font-black text-slate-700">
               <Upload className="h-5 w-5 text-cyan-700" />
-              {originalScan ? originalScan.name : "Choisir le scan original (PDF, JPG ou PNG)"}
+              {draggingOriginal
+                ? "Déposez le scan ici"
+                : originalScan
+                  ? originalScan.name
+                  : "Glisser-déposer ou choisir le scan original (PDF, JPG ou PNG)"}
               <input type="file" hidden accept="application/pdf,image/jpeg,image/png" onChange={(event) => chooseOriginalScan(event.target.files?.[0] ?? null)} />
             </label>
             {originalScan ? (
