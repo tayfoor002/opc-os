@@ -3,6 +3,7 @@ import { ArrowLeft, CalendarDays, FileText } from "lucide-react";
 
 import { DocumentDetailsActions } from "@/components/documents/DocumentDetailsActions";
 import { DocumentFileAttach } from "@/components/documents/DocumentFileAttach";
+import { WordPreview } from "@/components/documents/WordPreview";
 import type {
   DocumentAccess,
   DocumentDetails,
@@ -228,7 +229,9 @@ export function DocumentDetailsView({
             </span>
           </div>
 
-          {access.previewUrl && !isWordDocument ? (
+          {access.previewUrl && isWordDocument ? (
+            <WordPreview url={access.previewUrl} title={document.title} />
+          ) : access.previewUrl ? (
             <iframe
               src={access.previewUrl}
               title={`Aperçu PDF de ${document.title}`}
