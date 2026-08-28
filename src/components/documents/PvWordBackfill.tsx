@@ -45,7 +45,7 @@ export function PvWordBackfill({ documents }: Props) {
         word: wordByReference.get(source.reference as string) ?? null,
       }))
       .filter(({ word }) =>
-        !word || /Version Word fidèle créée à partir du PDF/i.test(word.comments ?? ""),
+        !word || /Version Word (?:fidèle créée|éditable reconstruite) à partir/i.test(word.comments ?? ""),
       );
   }, [documents]);
 
@@ -81,7 +81,7 @@ export function PvWordBackfill({ documents }: Props) {
         if (uploaded.error) throw new Error(`Archivage Word impossible : ${uploaded.error.message}`);
 
         const metadata = {
-          comments: `Version Word éditable reconstruite à partir du texte du PDF ${source.reference}.`,
+          comments: `Version Word éditable structurée selon le modèle OPC OS à partir du PDF ${source.reference}.`,
           file_url: storagePath,
         };
         if (existingWord) {
