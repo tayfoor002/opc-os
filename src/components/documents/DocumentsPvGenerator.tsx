@@ -155,7 +155,10 @@ export function DocumentsPvGenerator({
       reference,
       zone_name: zone?.name ?? "",
       classification,
-      project_name: projects.find((project) => project.id === projectId)?.name ?? "Projet PDD",
+      project_name: (() => {
+        const project = projects.find((item) => item.id === projectId);
+        return project?.code ? `Projet ${project.code}` : project?.name || "Projet PDD";
+      })(),
       issuer_company: issuerCompany,
       show_logos: {
         oncf: showOncfLogo,

@@ -258,7 +258,7 @@ export async function generatePvPdfBlob(pv: GeneratedPv) {
     },
     body: [
       ["Date", pv.meeting_date || "", "Classement", pv.classification],
-      ["Chantier", pv.project_name, "Entreprise", pv.issuer_company],
+      ["Projet", pv.project_name, "Entreprise", pv.issuer_company],
       ["Zone", pv.zone_name || "", "Lieu", pv.location || ""],
       ...([pv.start_time, pv.end_time].some(Boolean)
         ? [["Horaire", [pv.start_time, pv.end_time].filter(Boolean).join(" — "), "", ""]]
@@ -478,7 +478,7 @@ export async function generatePvWordBlob(pv: GeneratedPv) {
             borders,
             rows: [
               new TableRow({ children: [cell("Date", true), cell(pv.meeting_date), cell("Classement", true), cell(pv.classification)] }),
-              new TableRow({ children: [cell("Chantier", true), cell(pv.project_name), cell("Entreprise", true), cell(pv.issuer_company)] }),
+              new TableRow({ children: [cell("Projet", true), cell(pv.project_name), cell("Entreprise", true), cell(pv.issuer_company)] }),
               new TableRow({ children: [cell("Zone", true), cell(pv.zone_name), cell("Lieu", true), cell(pv.location)] }),
               ...([pv.start_time, pv.end_time].some(Boolean)
                 ? [new TableRow({ children: [cell("Horaire", true), cell([pv.start_time, pv.end_time].filter(Boolean).join(" — ")), cell("", true), cell("")] })]
