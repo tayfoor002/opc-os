@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Download,
   FileText,
   FileType2,
   FileSpreadsheet,
@@ -31,6 +32,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { DocumentListItem } from "@/lib/documents/queries";
+import { getDocumentStoragePathCandidates } from "@/lib/documents/storage";
+import { createClient } from "@/lib/supabase/client";
 
 type Project = {
   id: string;
@@ -45,6 +48,7 @@ type Props = {
 
 export function DocumentsView({ documents, projects }: Props) {
   const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
   const [open, setOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState("");
@@ -53,6 +57,9 @@ export function DocumentsView({ documents, projects }: Props) {
     () => new Set(),
   );
   const [isDeleting, startDeleting] = useTransition();
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadError, setDownloadError] = useState("");
   const [view, setView] = useState<"library" | "pv-generator" | "procedure-register">("library");
   const [typeFilter, setTypeFilter] = useState("all");
   const [subcategoryFilter, setSubcategoryFilter] = useState("all");
@@ -92,6 +99,79 @@ export function DocumentsView({ documents, projects }: Props) {
         .map((document) => document.id),
     [filteredDocuments],
   );
+  const selectedDocuments = useMemo(
+    () => documents.filter((document) => selectedIds.has(document.id)),
+    [documents, selectedIds],
+  );
+
+  async function downloadSelectedDocuments() {
+    if (!selectedDocuments.length) return;
+    setIsDownloading(true);
+    setDownloadProgress(0);
+    setDownloadError("");
+    try {
+      const JSZip = (await import("jszip")).default;
+      const archive = new JSZip();
+      const usedNames = new Set<string>();
+
+      for (let index = 0; index < selectedDocuments.length; index += 1) {
+        const document = selectedDocuments[index];
+        if (!document.file_url) throw new Error(`Aucun fichier associé à ${document.title}.`);
+        let storedFile: Blob | null = null;
+        let storedPath = "";
+        for (const candidate of getDocumentStoragePathCandidates(document.file_url)) {
+          const result = await supabase.storage.from("documents").download(candidate);
+          if (!result.error && result.data) {
+            storedFile = result.data;
+            storedPath = candidate;
+            break;
+          }
+        }
+        if (!storedFile) throw new Error(`Fichier introuvable : ${document.title}`);
+
+        const encodedName = storedPath.split("?")[0].split("/").at(-1);
+        let fileName = encodedName ? decodeURIComponent(encodedName) : `${document.title}.pdf`;
+        if (usedNames.has(fileName)) {
+          const extensionIndex = fileName.lastIndexOf(".");
+          const base = extensionIndex > 0 ? fileName.slice(0, extensionIndex) : fileName;
+          const extension = extensionIndex > 0 ? fileName.slice(extensionIndex) : "";
+          fileName = `${base}-${index + 1}${extension}`;
+        }
+        usedNames.add(fileName);
+        archive.file(fileName, storedFile);
+        setDownloadProgress(index + 1);
+      }
+
+      const zip = await archive.generateAsync({
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: { level: 6 },
+      });
+      const onlyWord = selectedDocuments.every(
+        (document) => document.document_subcategory === "pv_word",
+      );
+      const onlyPdf = selectedDocuments.every(
+        (document) => document.document_subcategory === "pv_reunion",
+      );
+      const format = onlyWord ? "word" : onlyPdf ? "pdf" : "documents";
+      const url = URL.createObjectURL(zip);
+      const anchor = window.document.createElement("a");
+      anchor.href = url;
+      anchor.download = `opc-os-pv-${format}-${new Date().toISOString().slice(0, 10)}.zip`;
+      window.document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (downloadFailure) {
+      setDownloadError(
+        downloadFailure instanceof Error
+          ? downloadFailure.message
+          : "Téléchargement multiple impossible.",
+      );
+    } finally {
+      setIsDownloading(false);
+    }
+  }
 
   function toggleDocument(documentIds: string[]) {
     setSelectedIds((current) => {
@@ -339,20 +419,37 @@ export function DocumentsView({ documents, projects }: Props) {
       />
 
       {selectedIds.size ? (
-        <div className="sticky bottom-4 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-white px-4 py-3 shadow-lg">
-          <span className="text-sm font-black text-slate-700">
-            {selectedIds.size} document(s) sélectionné(s)
-          </span>
-          <Button
-            type="button"
-            variant="destructive"
-            onClick={() => {
-              requestDelete([...selectedIds]);
-            }}
-          >
-            <Trash2 className="size-4" />
-            Supprimer la sélection
-          </Button>
+        <div className="sticky bottom-4 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-white px-4 py-3 shadow-lg">
+          <div>
+            <span className="text-sm font-black text-slate-700">
+              {selectedIds.size} document(s) sélectionné(s)
+            </span>
+            {downloadError ? <p className="mt-1 text-xs font-bold text-red-700">{downloadError}</p> : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              onClick={() => void downloadSelectedDocuments()}
+              disabled={isDownloading || isDeleting}
+              className="bg-emerald-700 hover:bg-emerald-800"
+            >
+              {isDownloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+              {isDownloading
+                ? `Préparation ${downloadProgress}/${selectedDocuments.length}…`
+                : "Télécharger la sélection (ZIP)"}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isDownloading}
+              onClick={() => {
+                requestDelete([...selectedIds]);
+              }}
+            >
+              <Trash2 className="size-4" />
+              Supprimer la sélection
+            </Button>
+          </div>
         </div>
       ) : null}
         </>
