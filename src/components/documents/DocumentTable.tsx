@@ -159,13 +159,27 @@ export function DocumentTable({
                         {word || original ? "PDF" : "Ouvrir"}
                       </Link>
                       {word ? (
-                        <Link
-                          href={`/documents/${word.id}`}
-                          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-black text-white transition hover:bg-blue-700"
-                        >
-                          <FileType2 className="size-3.5" />
-                          Word
-                        </Link>
+                        <div className="inline-flex items-center overflow-hidden rounded-lg border border-blue-600 bg-white">
+                          <Link
+                            href={`/documents/${word.id}`}
+                            className="inline-flex h-9 items-center gap-1.5 bg-blue-600 px-3 text-xs font-black text-white transition hover:bg-blue-700"
+                          >
+                            <FileType2 className="size-3.5" />
+                            Word
+                          </Link>
+                          <label
+                            className="grid h-9 cursor-pointer place-items-center px-2.5 text-blue-700 hover:bg-blue-50"
+                            title="Sélectionner uniquement ce fichier Word"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(word.id)}
+                              onChange={() => onToggle([word.id])}
+                              aria-label={`Sélectionner uniquement le Word de ${document.title}`}
+                              className="size-4 cursor-pointer rounded border-blue-300 accent-blue-600"
+                            />
+                          </label>
+                        </div>
                       ) : null}
                       {original ? (
                         <Link

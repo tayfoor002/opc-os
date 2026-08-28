@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   FileText,
+  FileType2,
   FileSpreadsheet,
   FolderOpen,
   Loader2,
@@ -76,6 +77,13 @@ export function DocumentsView({ documents, projects }: Props) {
         return matchesType && matchesSubcategory && matchesQuery;
       }),
     [documents, query, subcategoryFilter, typeFilter],
+  );
+  const visibleWordIds = useMemo(
+    () =>
+      filteredDocuments
+        .filter((document) => document.document_subcategory === "pv_word")
+        .map((document) => document.id),
+    [filteredDocuments],
   );
 
   function toggleDocument(documentIds: string[]) {
@@ -261,10 +269,21 @@ export function DocumentsView({ documents, projects }: Props) {
             {filteredDocuments.length} document(s) · plus récents en premier
           </span>
         </div>
-        <div className="mt-3">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
           <DocumentMetadataSync
             documentIds={documents.map((document) => document.id)}
           />
+          {visibleWordIds.length ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setSelectedIds(new Set(visibleWordIds))}
+              className="border-blue-200 text-blue-700 hover:bg-blue-50"
+            >
+              <FileType2 className="size-4" />
+              Sélectionner uniquement les Word ({visibleWordIds.length})
+            </Button>
+          ) : null}
         </div>
         <PvWordBackfill documents={documents} />
         {typeFilter === "procedure" ? (
@@ -334,7 +353,7 @@ export function DocumentsView({ documents, projects }: Props) {
                 : "Supprimer les documents sélectionnés ?"}
             </DialogTitle>
             <DialogDescription>
-              {pendingDeleteIds.length} document(s) et leurs fichiers PDF
+              {pendingDeleteIds.length} document(s) et leurs fichiers associés
               seront supprimés définitivement. Cette action est irréversible.
             </DialogDescription>
           </DialogHeader>
@@ -361,7 +380,7 @@ export function DocumentsView({ documents, projects }: Props) {
               type="button"
               variant="destructive"
               onClick={handleMultipleDelete}
-              disabled={isDeleting || !selectedIds.size}
+              disabled={isDeleting || !pendingDeleteIds.length}
             >
               {isDeleting ? (
                 <Loader2 className="size-4 animate-spin" />
