@@ -85,6 +85,13 @@ export function DocumentsView({ documents, projects }: Props) {
         .map((document) => document.id),
     [filteredDocuments],
   );
+  const visiblePvPdfIds = useMemo(
+    () =>
+      filteredDocuments
+        .filter((document) => document.document_subcategory === "pv_reunion")
+        .map((document) => document.id),
+    [filteredDocuments],
+  );
 
   function toggleDocument(documentIds: string[]) {
     setSelectedIds((current) => {
@@ -273,17 +280,30 @@ export function DocumentsView({ documents, projects }: Props) {
           <DocumentMetadataSync
             documentIds={documents.map((document) => document.id)}
           />
-          {visibleWordIds.length ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setSelectedIds(new Set(visibleWordIds))}
-              className="border-blue-200 text-blue-700 hover:bg-blue-50"
-            >
-              <FileType2 className="size-4" />
-              Sélectionner uniquement les Word ({visibleWordIds.length})
-            </Button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {visiblePvPdfIds.length ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setSelectedIds(new Set(visiblePvPdfIds))}
+                className="border-red-200 text-red-700 hover:bg-red-50"
+              >
+                <FileText className="size-4" />
+                Sélectionner tous les PDF ({visiblePvPdfIds.length})
+              </Button>
+            ) : null}
+            {visibleWordIds.length ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setSelectedIds(new Set(visibleWordIds))}
+                className="border-blue-200 text-blue-700 hover:bg-blue-50"
+              >
+                <FileType2 className="size-4" />
+                Sélectionner tous les Word ({visibleWordIds.length})
+              </Button>
+            ) : null}
+          </div>
         </div>
         <PvWordBackfill documents={documents} />
         {typeFilter === "procedure" ? (
