@@ -73,9 +73,10 @@ export function PvWordBackfill({ documents }: Props) {
         if (!pdfBlob) throw new Error(`PDF introuvable : ${source.title}`);
 
         const word = await convertPdfBlobToWord(pdfBlob);
+        const storageWord = new Blob([await word.arrayBuffer()], { type: "application/pdf" });
         const wordId = crypto.randomUUID();
         const storagePath = `${source.project_id}/${wordId}/${wordFileBase(source.title)}.docx`;
-        const uploaded = await supabase.storage.from("documents").upload(storagePath, word, {
+        const uploaded = await supabase.storage.from("documents").upload(storagePath, storageWord, {
           // Supabase currently restricts this bucket to PDF MIME metadata.
           // The bytes and filename remain a valid .docx document.
           contentType: "application/pdf",
