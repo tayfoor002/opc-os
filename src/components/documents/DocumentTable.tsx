@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { FileScan, FileText, Pencil, Trash2 } from "lucide-react";
+import { FileScan, FileText, FileType2, Pencil, Trash2 } from "lucide-react";
 
 import type { DocumentListItem } from "@/lib/documents/queries";
 
@@ -32,6 +32,7 @@ const subcategoryLabels: Record<string, string> = {
   installation_campagne: "Installation campagne",
   vt: "Vérification technique",
   pv_reunion: "PV généré",
+  pv_word: "Version Word",
   pv_scan_original: "Scan original",
 };
 
@@ -44,15 +45,20 @@ export function DocumentTable({
   onRequestDelete,
 }: DocumentTableProps) {
   const originalByReference = new Map<string, DocumentListItem>();
+  const wordByReference = new Map<string, DocumentListItem>();
   for (const document of allDocuments) {
+    if (document.document_subcategory === "pv_word") {
+      const generatedReference = document.reference?.replace(/-WORD$/i, "") ?? "";
+      if (generatedReference) wordByReference.set(generatedReference, document);
+    }
     if (document.document_subcategory !== "pv_scan_original") continue;
     const generatedReference = document.reference?.replace(/-ORG$/i, "") ?? "";
     if (generatedReference) originalByReference.set(generatedReference, document);
   }
   const groupedRows = documents
     .filter((document) => {
-      if (document.document_subcategory !== "pv_scan_original") return true;
-      const generatedReference = document.reference?.replace(/-ORG$/i, "") ?? "";
+      if (!["pv_scan_original", "pv_word"].includes(document.document_subcategory ?? "")) return true;
+      const generatedReference = document.reference?.replace(/-(?:ORG|WORD)$/i, "") ?? "";
       return !documents.some(
         (candidate) =>
           candidate.document_subcategory === "pv_reunion" &&
@@ -61,6 +67,10 @@ export function DocumentTable({
     })
     .map((document) => ({
       document,
+      word:
+        document.document_subcategory === "pv_reunion" && document.reference
+          ? wordByReference.get(document.reference) ?? null
+          : null,
       original:
         document.document_subcategory === "pv_reunion" && document.reference
           ? originalByReference.get(document.reference) ?? null
@@ -117,9 +127,9 @@ export function DocumentTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--opc-border)]">
-            {groupedRows.map(({ document, original }) => {
+            {groupedRows.map(({ document, word, original }) => {
               const isLatestPlan = latestPlanIds.has(document.id);
-              const groupedIds = [document.id, original?.id].filter(
+              const groupedIds = [document.id, word?.id, original?.id].filter(
                 (id): id is string => Boolean(id),
               );
               const isSelected = groupedIds.every((id) => selectedIds.has(id));
@@ -146,8 +156,17 @@ export function DocumentTable({
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[var(--opc-blue)] px-3 text-xs font-black text-white transition hover:bg-blue-700"
                       >
                         <FileText className="size-3.5" />
-                        {original ? "PV généré" : "Ouvrir"}
+                        {word || original ? "PDF" : "Ouvrir"}
                       </Link>
+                      {word ? (
+                        <Link
+                          href={`/documents/${word.id}`}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-black text-white transition hover:bg-blue-700"
+                        >
+                          <FileType2 className="size-3.5" />
+                          Word
+                        </Link>
+                      ) : null}
                       {original ? (
                         <Link
                           href={`/documents/${original.id}`}
@@ -183,9 +202,9 @@ export function DocumentTable({
                   </Cell>
                   <Cell document={document}>
                     <span className="font-bold">{document.title}</span>
-                    {original ? (
+                    {word || original ? (
                       <span className="mt-1 block text-xs font-semibold text-cyan-700">
-                        PV généré + scan original
+                        {["PDF", word ? "Word" : null, original ? "scan original" : null].filter(Boolean).join(" + ")}
                       </span>
                     ) : null}
                   </Cell>

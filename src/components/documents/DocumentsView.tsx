@@ -20,6 +20,7 @@ import { DocumentUpload } from "./DocumentUpload";
 import { DocumentMetadataSync } from "./DocumentMetadataSync";
 import { ProcedureRegister } from "./ProcedureRegister";
 import { DocumentsPvGenerator } from "./DocumentsPvGenerator";
+import { PvWordBackfill } from "./PvWordBackfill";
 
 import {
   Dialog,
@@ -265,6 +266,7 @@ export function DocumentsView({ documents, projects }: Props) {
             documentIds={documents.map((document) => document.id)}
           />
         </div>
+        <PvWordBackfill documents={documents} />
         {typeFilter === "procedure" ? (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
             <div>

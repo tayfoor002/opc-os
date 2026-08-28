@@ -86,6 +86,7 @@ function subcategoryLabel(value: string | null) {
       installation_campagne: "Installation campagne",
       vt: "Vérification technique",
       pv_reunion: "PV généré",
+      pv_word: "Version Word",
       pv_scan_original: "Scan original",
     }[value] ?? value
   );
@@ -108,6 +109,7 @@ export function DocumentDetailsView({
   projects,
   initialOptions,
 }: DocumentDetailsViewProps) {
+  const isWordDocument = document.document_subcategory === "pv_word";
   const projectName = document.project
     ? [document.project.code, document.project.name].filter(Boolean).join(" — ")
     : null;
@@ -220,13 +222,13 @@ export function DocumentDetailsView({
 
         <section className="min-h-[65vh] overflow-hidden rounded-2xl border border-[var(--opc-border)] bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-[var(--opc-border)] px-5 py-4">
-            <h2 className="font-black">Aperçu PDF</h2>
+            <h2 className="font-black">{isWordDocument ? "Fichier Word" : "Aperçu PDF"}</h2>
             <span className="text-xs text-[var(--opc-muted)]">
               Lien sécurisé temporaire
             </span>
           </div>
 
-          {access.previewUrl ? (
+          {access.previewUrl && !isWordDocument ? (
             <iframe
               src={access.previewUrl}
               title={`Aperçu PDF de ${document.title}`}
@@ -236,14 +238,18 @@ export function DocumentDetailsView({
             <div className="flex min-h-[560px] items-center justify-center p-8 text-center">
               <div className="max-w-md">
                 <FileText className="mx-auto mb-4 size-12 text-slate-300" />
-                <p className="font-bold">Aperçu indisponible</p>
+                <p className="font-bold">{isWordDocument ? "Document Word prêt à télécharger" : "Aperçu indisponible"}</p>
                 <p className="mt-2 text-sm text-[var(--opc-muted)]">
-                  {access.error ?? "Le fichier PDF ne peut pas être affiché."}
+                  {isWordDocument
+                    ? "Utilisez le bouton Télécharger en haut de la page pour ouvrir le fichier dans Word."
+                    : access.error ?? "Le fichier PDF ne peut pas être affiché."}
                 </p>
-                <DocumentFileAttach
-                  documentId={document.id}
-                  projectId={document.project_id}
-                />
+                {!isWordDocument ? (
+                  <DocumentFileAttach
+                    documentId={document.id}
+                    projectId={document.project_id}
+                  />
+                ) : null}
               </div>
             </div>
           )}

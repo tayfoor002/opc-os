@@ -18,6 +18,11 @@ export type DocumentListItem = {
   document_type: string;
   document_subcategory: string | null;
   execution_status: string;
+  company: string | null;
+  comments: string | null;
+  document_date: string | null;
+  zone_id: string | null;
+  file_url: string | null;
   created_at: string;
 };
 
@@ -57,7 +62,7 @@ export type DocumentAccess = {
 };
 
 const DOCUMENT_COLUMNS =
-  "id, project_id, reference, title, revision, status, category, document_type, document_subcategory, execution_status, created_at";
+  "id, project_id, reference, title, revision, status, category, document_type, document_subcategory, execution_status, company, comments, document_date, zone_id, file_url, created_at";
 
 const DOCUMENT_DETAILS_COLUMNS = `
   id,

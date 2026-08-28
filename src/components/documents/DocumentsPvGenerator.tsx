@@ -143,6 +143,7 @@ export function DocumentsPvGenerator({
     setGenerating(true);
     setError("");
     const documentId = crypto.randomUUID();
+    const wordDocumentId = crypto.randomUUID();
     const originalDocumentId = originalScan ? crypto.randomUUID() : null;
     const parsed = parsePastedPv(text, automaticTitle);
     const date = pvDate;
@@ -170,6 +171,7 @@ export function DocumentsPvGenerator({
     };
     const fileBase = safePvFileName(pv.title);
     const storagePath = `${projectId}/${documentId}/${fileBase}.pdf`;
+    const wordStoragePath = `${projectId}/${wordDocumentId}/${fileBase}.docx`;
     const originalStoragePath = originalDocumentId
       ? `${projectId}/${originalDocumentId}/${fileBase}-scan-original.pdf`
       : null;
@@ -184,6 +186,14 @@ export function DocumentsPvGenerator({
         upsert: false,
       });
       if (upload.error) throw new Error(`Archivage du PDF impossible : ${upload.error.message}`);
+      const wordUpload = await supabase.storage.from("documents").upload(wordStoragePath, word, {
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        upsert: false,
+      });
+      if (wordUpload.error) {
+        await supabase.storage.from("documents").remove([storagePath]);
+        throw new Error(`Archivage du Word impossible : ${wordUpload.error.message}`);
+      }
       if (original && originalStoragePath) {
         const originalUpload = await supabase.storage
           .from("documents")
@@ -192,7 +202,7 @@ export function DocumentsPvGenerator({
             upsert: false,
           });
         if (originalUpload.error) {
-          await supabase.storage.from("documents").remove([storagePath]);
+          await supabase.storage.from("documents").remove([storagePath, wordStoragePath]);
           throw new Error(`Archivage du scan original impossible : ${originalUpload.error.message}`);
         }
       }
@@ -217,6 +227,15 @@ export function DocumentsPvGenerator({
           comments: `PV final généré automatiquement depuis un texte digitalisé. Classement : ${classification}.`,
           file_url: storagePath,
         },
+        {
+          id: wordDocumentId,
+          ...sharedMetadata,
+          title: `${pv.title} — Word`,
+          reference: `${reference}-WORD`,
+          document_subcategory: "pv_word",
+          comments: `Version Word éditable associée au PV ${reference}. Classement : ${classification}.`,
+          file_url: wordStoragePath,
+        },
         ...(originalDocumentId && originalStoragePath
           ? [{
               id: originalDocumentId,
@@ -233,7 +252,7 @@ export function DocumentsPvGenerator({
       if (insert.error) {
         await supabase.storage
           .from("documents")
-          .remove([storagePath, originalStoragePath].filter((path): path is string => Boolean(path)));
+          .remove([storagePath, wordStoragePath, originalStoragePath].filter((path): path is string => Boolean(path)));
         throw new Error(`Classement dans Documents impossible : ${insert.error.message}`);
       }
       setGenerated({ pdf, word, fileBase, documentId, original });
@@ -391,7 +410,7 @@ export function DocumentsPvGenerator({
           </button>
         ) : (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-            <p className="flex items-center gap-2 text-sm font-black text-emerald-800"><Archive className="h-5 w-5" /> {generated.original ? "PV généré et scan original classés dans Documents → PV" : "PV généré et classé dans Documents → PV"}</p>
+            <p className="flex items-center gap-2 text-sm font-black text-emerald-800"><Archive className="h-5 w-5" /> {generated.original ? "PDF, Word et scan original classés dans Documents → PV" : "PDF et Word classés dans Documents → PV"}</p>
             <div className={`mt-4 grid gap-3 sm:grid-cols-2 ${generated.original ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
               <button type="button" onClick={() => downloadGeneratedFile(generated.pdf, `${generated.fileBase}.pdf`)} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--opc-red)] px-4 text-sm font-black text-white"><Download className="h-4 w-4" /> Télécharger PDF</button>
               <button type="button" onClick={() => downloadGeneratedFile(generated.word, `${generated.fileBase}.docx`)} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--opc-blue)] px-4 text-sm font-black text-white"><Download className="h-4 w-4" /> Télécharger Word</button>
