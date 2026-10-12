@@ -1,0 +1,2 @@
+import Link from "next/link";
+export default function PasswordUpdatedPage(){return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><section className="rounded-xl border bg-white p-8"><h1 className="text-xl font-bold">Mot de passe enregistré</h1><p className="my-4 text-sm">Reconnecte-toi avec ton nouveau mot de passe.</p><Link href="/login" className="font-bold text-blue-700">Se connecter</Link></section></main>;}

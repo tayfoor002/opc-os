@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import {
   Eye,
   LockKeyhole,
@@ -170,12 +171,12 @@ export default async function LoginPage({
                   />
                   Se souvenir de moi
                 </label>
-                <button
-                  type="button"
+                <Link
+                  href="/auth/forgot-password"
                   className="text-left font-bold text-[var(--opc-blue)] hover:underline"
                 >
                   Mot de passe oublié ?
-                </button>
+                </Link>
               </div>
 
               <button

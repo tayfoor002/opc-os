@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CalendarDays,
@@ -10,12 +10,14 @@ import {
   GanttChartSquare,
   GripVertical,
   ListChecks,
-  ListTree,
   Loader2,
   RefreshCw,
   Search,
 } from "lucide-react";
 import { ActivityDetailsDrawer } from "@/components/planning/ActivityDetailsDrawer";
+import { EditableGantt } from "@/components/planning/EditableGantt";
+import { saveScheduleChanges } from "@/app/planning/actions";
+import { dayDistance, shiftDate } from "@/lib/planning/schedule";
 import { createClient } from "@/lib/supabase/client";
 import { addDays, differenceInDays, formatDateOnly, formatLongDate, formatShortDate, parseDateOnly, startOfWeek } from "@/lib/date-utils";
 import type { Activity, ActivityStatus } from "@/types/activity";
@@ -35,9 +37,9 @@ export function PlanningWorkspace() {
   const supabase = useMemo(() => createClient(), []);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [scheduleHistory,setScheduleHistory] = useState<{id:string;source_name:string;created_at:string;changes:unknown[]}[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
-  const [view, setView] = useState<ViewMode>("week");
-  const [ganttScale, setGanttScale] = useState<GanttScale>("week");
+  const [view, setView] = useState<ViewMode>("gantt");
   const [timelineScale, setTimelineScale] = useState<GanttScale>("week");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -61,14 +63,16 @@ export function PlanningWorkspace() {
       return;
     }
     setProjectId(project.data.id);
-    const [activityResult, taskResult] = await Promise.all([
+    const [activityResult, taskResult, historyResult] = await Promise.all([
       supabase.from("activities").select("*").eq("project_id", project.data.id).order("start_date", { ascending: true }),
       supabase.from("tasks").select("*").eq("project_id", project.data.id).order("start_date", { ascending: true }),
+      supabase.from("schedule_changes").select("id,source_name,created_at,changes").eq("project_id",project.data.id).order("created_at",{ascending:false}).limit(5),
     ]);
     if (activityResult.error) setError(activityResult.error.message);
     else setActivities((activityResult.data ?? []) as Activity[]);
     if (taskResult.error) setError(taskResult.error.message);
     else setTasks((taskResult.data ?? []) as Task[]);
+    if (!historyResult.error) setScheduleHistory(historyResult.data ?? []);
     setLoading(false);
   }
 
@@ -93,9 +97,9 @@ export function PlanningWorkspace() {
 
   const filtered = useMemo(() => activities.filter((activity) =>
     `${activity.code} ${activity.name} ${activity.zone ?? ""} ${activity.responsible ?? ""}`.toLowerCase().includes(query.toLowerCase())
-  ), [activities, query]);
+    || tasks.some(task => task.activity_id === activity.id && task.title.toLowerCase().includes(query.toLowerCase()))
+  ), [activities, tasks, query]);
 
-  const datedActivities = filtered.filter((activity) => activity.start_date && activity.finish_date);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const overdue = activities.filter((activity) => activity.finish_date && parseDateOnly(activity.finish_date) < today && activity.status !== "completed");
@@ -109,6 +113,24 @@ export function PlanningWorkspace() {
   async function updateActivity(activityId: string, updates: Partial<Activity>) {
     setSaving(true);
     setError("");
+    const activity = activities.find(item => item.id === activityId);
+    const children = tasks.filter(task => task.activity_id === activityId);
+    if (activity && children.length && (updates.start_date !== undefined || updates.finish_date !== undefined)) {
+      const dated = children.filter(task => task.start_date && task.due_date);
+      if (!activity.start_date || !updates.start_date || !dated.length || !projectId) {
+        setError("Modifie les dates des tâches dans le Gantt : l’activité récapitule leurs dates.");setSaving(false);return;
+      }
+      const delta = dayDistance(activity.start_date, updates.start_date);
+      if (updates.finish_date && activity.finish_date && updates.finish_date !== shiftDate(activity.finish_date, delta)) {
+        setError("Une activité avec tâches conserve sa durée lors d’un déplacement. Pour changer sa durée, modifie les tâches dans le Gantt.");setSaving(false);return;
+      }
+      const applied = await saveScheduleChanges({projectId,source:"Déplacement d’activité",rows:dated.map(task => ({task_id:task.id,activity_id:activityId,title:task.title,start:shiftDate(task.start_date!,delta),finish:shiftDate(task.due_date!,delta),expected_start:task.start_date,expected_finish:task.due_date}))});
+      if (!applied.success) {setError(applied.error);setSaving(false);return;}
+      updates = Object.fromEntries(Object.entries(updates).filter(([key]) => !["start_date","finish_date"].includes(key)));
+      await loadActivities(false);
+      setSelectedActivity(null);
+      if (!Object.keys(updates).length) {setSaving(false);return;}
+    }
     const result = await supabase.from("activities").update(updates).eq("id", activityId);
     if (result.error) setError(result.error.message);
     else {
@@ -135,10 +157,10 @@ export function PlanningWorkspace() {
     <div className="mx-auto max-w-[1700px]">
       <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
         <div>
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-[var(--opc-red)]">Sprint 11 · Connected Planning</p>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-[var(--opc-red)]">OPC OS · Pilotage du planning</p>
           <h1 className="mt-2 text-4xl font-black tracking-tight text-[var(--opc-ink)]">Planning connecté</h1>
-          <p className="mt-2 text-base font-bold text-[var(--opc-blue)]">Planning et Activities utilisent maintenant les mêmes données Supabase.</p>
-          <p className="mt-2 text-sm text-[var(--opc-muted)]">Glisse une activité vers un autre jour : ses dates sont recalculées et synchronisées partout.</p>
+          <p className="mt-2 text-base font-bold text-[var(--opc-blue)]">Un planning relié aux activités, aux tâches et à l’avancement terrain.</p>
+          <p className="mt-2 text-sm text-[var(--opc-muted)]">Importe, vérifie et ajuste les dates. Le Gantt et les activités restent synchronisés avec les tâches.</p>
         </div>
         <button type="button" onClick={() => void loadActivities()} className="flex items-center justify-center gap-2 rounded-xl border border-[var(--opc-border)] bg-white px-4 py-3 text-sm font-black text-slate-600 shadow-sm"><RefreshCw className="h-4 w-4" /> Actualiser</button>
       </div>
@@ -163,7 +185,7 @@ export function PlanningWorkspace() {
           </div>
           <div className="flex items-center gap-2 rounded-xl border border-[var(--opc-border)] bg-slate-50 px-3 py-2">
             <Search className="h-4 w-4 text-slate-400" />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher une activité..." className="w-full bg-transparent text-sm outline-none sm:w-72" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher une activité ou une tâche..." className="w-full bg-transparent text-sm outline-none sm:w-72" />
           </div>
         </div>
 
@@ -189,9 +211,11 @@ export function PlanningWorkspace() {
           />
         ) : null}
 
-        {!loading && view === "gantt" ? <GanttView activities={datedActivities} tasks={tasks} onOpen={setSelectedActivity} scale={ganttScale} onScaleChange={setGanttScale} /> : null}
+        {!loading && view === "gantt" && projectId ? <EditableGantt activities={filtered} tasks={tasks.filter(task => !task.activity_id || filtered.some(activity => activity.id === task.activity_id))} projectId={projectId} onSaved={() => loadActivities(false)} onOpenActivity={setSelectedActivity} /> : null}
         {!loading && view === "activities" ? <ActivitiesTable activities={filtered} onOpen={setSelectedActivity} /> : null}
       </section>
+
+      {scheduleHistory.length > 0 && <section className="mt-5 rounded-xl border bg-white p-5"><h2 className="font-black text-slate-800">Dernières synchronisations</h2><div className="mt-3 divide-y">{scheduleHistory.map(item=><div key={item.id} className="flex flex-wrap justify-between gap-2 py-3 text-sm"><span className="font-semibold">{item.source_name} · {item.changes.length} tâches</span><time className="text-xs text-slate-500">{new Intl.DateTimeFormat("fr-FR",{dateStyle:"medium",timeStyle:"short"}).format(new Date(item.created_at))}</time></div>)}</div></section>}
 
       <ActivityDetailsDrawer activity={selectedActivity} saving={saving} onClose={() => setSelectedActivity(null)} onSave={async (updates) => { if (!selectedActivity) return; await updateActivity(selectedActivity.id, updates); }} />
     </div>
@@ -391,264 +415,6 @@ function ActivityCard({ activity, onOpen, onDragStart, onDragEnd }: { activity: 
       <div className="flex items-start gap-2"><GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><div className="min-w-0"><p className="truncate font-black text-slate-800">{activity.code}</p><p className="mt-1 line-clamp-2 font-bold text-slate-700">{activity.name}</p><p className="mt-2 text-slate-500">{activity.zone ?? "Sans zone"} · {activity.progress}%</p></div></div>
     </div>
   );
-}
-
-function GanttView({
-  activities,
-  tasks,
-  onOpen,
-  scale,
-  onScaleChange,
-}: {
-  activities: Activity[];
-  tasks: Task[];
-  onOpen: (activity: Activity) => void;
-  scale: GanttScale;
-  onScaleChange: (scale: GanttScale) => void;
-}) {
-  const [anchorDate, setAnchorDate] = useState(() => {
-    const value = new Date();
-    value.setHours(0, 0, 0, 0);
-    return value;
-  });
-  const [showTasks, setShowTasks] = useState(false);
-
-  if (activities.length === 0) return <EmptyState />;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const { rangeStart, rangeEnd, ticks, cellWidth, stepDays } = buildGanttRange(anchorDate, scale);
-  const totalDays = Math.max(1, differenceInDays(rangeStart, rangeEnd) + 1);
-  const timelineWidth = Math.max(900, ticks.length * cellWidth);
-  const dayWidth = timelineWidth / totalDays;
-  const todayOffset = differenceInDays(rangeStart, today);
-  const todayVisible = todayOffset >= 0 && todayOffset < totalDays;
-
-  const visibleActivities = activities.filter((activity) => {
-    const start = parseDateOnly(activity.start_date!);
-    const finish = parseDateOnly(activity.finish_date!);
-    return start <= rangeEnd && finish >= rangeStart;
-  });
-
-  function shift(direction: -1 | 1) {
-    setAnchorDate((current) => addDays(current, stepDays * direction));
-  }
-
-  return (
-    <div className="p-5">
-      <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          {([[
-            "day", "Jour"
-          ], [
-            "week", "Semaine"
-          ], [
-            "month", "Mois"
-          ], [
-            "year", "Année"
-          ]] as const).map(([value, label]) => (
-            <button key={value} type="button" onClick={() => onScaleChange(value)} className={`rounded-lg px-3 py-2 text-sm font-black transition ${scale === value ? "bg-[var(--opc-blue)] text-white" : "border border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"}`}>
-              {label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setShowTasks((current) => !current)}
-            className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-black transition ${
-              showTasks
-                ? "border-violet-600 bg-violet-600 text-white"
-                : "border-[var(--opc-border)] bg-white text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            <ListTree className="h-4 w-4" />
-            {showTasks ? "Masquer les tasks" : "Afficher les tasks"}
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={() => shift(-1)} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--opc-border)] bg-white"><ChevronLeft className="h-4 w-4" /></button>
-          <button type="button" onClick={() => setAnchorDate(new Date())} className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700">Aujourd’hui · J+0</button>
-          <button type="button" onClick={() => shift(1)} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--opc-border)] bg-white"><ChevronRight className="h-4 w-4" /></button>
-        </div>
-      </div>
-
-      <div className="mb-3 flex items-center justify-between text-xs font-bold text-slate-500">
-        <span>{formatLongDate(rangeStart)} — {formatLongDate(rangeEnd)}</span>
-        <span>
-          {visibleActivities.length} activité{visibleActivities.length > 1 ? "s" : ""}
-          {showTasks
-            ? ` · ${tasks.filter((task) => task.activity_id && task.start_date && task.due_date).length} tasks planifiées`
-            : ""}
-        </span>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-[var(--opc-border)]">
-        <div className="grid min-w-max" style={{ gridTemplateColumns: `280px ${timelineWidth}px` }}>
-          <div className="sticky left-0 z-30 flex h-14 items-center border-b border-r border-[var(--opc-border)] bg-slate-50 px-4 text-xs font-black uppercase tracking-wide text-slate-500">Activité</div>
-          <div className="relative flex h-14 border-b border-[var(--opc-border)] bg-slate-50">
-            {ticks.map((tick) => (
-              <div key={tick.key} className="flex shrink-0 items-center justify-center border-r border-slate-200 px-1 text-center text-[11px] font-black text-slate-600" style={{ width: `${cellWidth}px` }} title={formatLongDate(tick.date)}>
-                {tick.label}
-              </div>
-            ))}
-            {todayVisible ? <div className="pointer-events-none absolute bottom-0 top-0 z-20 border-l-2 border-red-500" style={{ left: `${todayOffset * dayWidth}px` }}><span className="absolute left-1 top-1 whitespace-nowrap rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-black text-white">J+0</span></div> : null}
-          </div>
-
-          {visibleActivities.map((activity) => {
-            const actualStart = parseDateOnly(activity.start_date!);
-            const actualFinish = parseDateOnly(activity.finish_date!);
-            const clippedStart = actualStart < rangeStart ? rangeStart : actualStart;
-            const clippedFinish = actualFinish > rangeEnd ? rangeEnd : actualFinish;
-            const offset = differenceInDays(rangeStart, clippedStart);
-            const duration = Math.max(1, differenceInDays(clippedStart, clippedFinish) + 1);
-            const colorFamily =
-              activity.status === "completed"
-                ? { activity: "bg-emerald-600", task: "bg-emerald-400" }
-                : activity.status === "blocked"
-                  ? { activity: "bg-red-600", task: "bg-red-400" }
-                  : activity.critical
-                    ? { activity: "bg-orange-500", task: "bg-orange-300" }
-                    : { activity: "bg-blue-700", task: "bg-blue-400" };
-            const activityTasks = tasks.filter((task) => {
-              if (
-                task.activity_id !== activity.id ||
-                !task.start_date ||
-                !task.due_date
-              ) {
-                return false;
-              }
-              const taskStart = parseDateOnly(task.start_date);
-              const taskFinish = parseDateOnly(task.due_date);
-              return taskStart <= rangeEnd && taskFinish >= rangeStart;
-            });
-            return (
-              <Fragment key={activity.id}>
-              <div onClick={() => onOpen(activity)} className="sticky left-0 z-20 flex h-14 cursor-pointer items-center border-b border-r border-slate-100 bg-white px-4 hover:bg-blue-50/40">
-                <div className="min-w-0"><p className="truncate text-xs font-black text-[var(--opc-blue)]">{activity.code}</p><p className="truncate text-sm font-bold text-slate-800">{activity.name}</p></div>
-              </div>
-              <button type="button" onClick={() => onOpen(activity)} className="relative h-14 border-b border-slate-100 text-left hover:bg-blue-50/20" style={{ backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth}px)`, backgroundSize: `${cellWidth}px 100%` }}>
-                {todayVisible ? <div className="pointer-events-none absolute inset-y-0 z-10 border-l-2 border-red-500/80" style={{ left: `${todayOffset * dayWidth}px` }} /> : null}
-                <div className={`absolute top-2.5 h-9 overflow-hidden rounded-lg shadow-sm ${colorFamily.activity}`} style={{ left: `${offset * dayWidth}px`, width: `${Math.max(4, duration * dayWidth)}px` }} title={`${activity.name} · ${formatShortDate(activity.start_date)} → ${formatShortDate(activity.finish_date)}`}>
-                  <div className="absolute inset-y-0 left-0 bg-black/20" style={{ width: `${Math.min(100, Math.max(0, activity.progress))}%` }} />
-                  <span className="relative z-10 flex h-full items-center whitespace-nowrap px-2 text-[10px] font-black text-white">{activity.progress}% · {formatShortDate(activity.start_date)} → {formatShortDate(activity.finish_date)}</span>
-                </div>
-              </button>
-              {showTasks
-                ? activityTasks.map((task) => {
-                    const taskStart = parseDateOnly(task.start_date!);
-                    const taskFinish = parseDateOnly(task.due_date!);
-                    const taskClippedStart =
-                      taskStart < rangeStart ? rangeStart : taskStart;
-                    const taskClippedFinish =
-                      taskFinish > rangeEnd ? rangeEnd : taskFinish;
-                    const taskOffset = differenceInDays(
-                      rangeStart,
-                      taskClippedStart,
-                    );
-                    const taskDuration = Math.max(
-                      1,
-                      differenceInDays(taskClippedStart, taskClippedFinish) + 1,
-                    );
-                    const taskBarClass = colorFamily.task;
-
-                    return (
-                      <Fragment key={task.id}>
-                        <a
-                          href={`/tasks?activity=${activity.id}`}
-                          className="sticky left-0 z-20 flex h-11 min-w-0 items-center border-b border-r border-slate-100 bg-slate-50 px-4 pl-8 hover:bg-blue-50"
-                          title={task.title}
-                        >
-                          <span className="mr-2 text-xs font-black text-blue-500">↳</span>
-                          <span className="truncate text-xs font-bold text-slate-700">
-                            {task.title}
-                          </span>
-                        </a>
-                        <div
-                          className="relative h-11 border-b border-slate-100 bg-slate-50/40"
-                          style={{
-                            backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth - 1}px, rgb(226 232 240) ${cellWidth}px)`,
-                            backgroundSize: `${cellWidth}px 100%`,
-                          }}
-                        >
-                          {todayVisible ? (
-                            <div
-                              className="pointer-events-none absolute inset-y-0 z-10 border-l-2 border-red-500/60"
-                              style={{ left: `${todayOffset * dayWidth}px` }}
-                            />
-                          ) : null}
-                          <div
-                            className={`absolute top-2 h-7 overflow-hidden rounded-md shadow-sm ${taskBarClass}`}
-                            style={{
-                              left: `${taskOffset * dayWidth}px`,
-                              width: `${Math.max(4, taskDuration * dayWidth)}px`,
-                            }}
-                            title={`${task.title} · ${formatShortDate(task.start_date)} → ${formatShortDate(task.due_date)}`}
-                          >
-                            <span className="flex h-full items-center whitespace-nowrap px-2 text-[10px] font-black text-white">
-                              {task.progress}% · {formatShortDate(task.start_date)} → {formatShortDate(task.due_date)}
-                            </span>
-                          </div>
-                        </div>
-                      </Fragment>
-                    );
-                  })
-                : null}
-              </Fragment>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-4 text-xs font-bold text-slate-500">
-        <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-[var(--opc-blue)]" /> Planifiée / en cours</span>
-        <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-orange-500" /> Critique</span>
-        <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-red-600" /> Bloquée</span>
-        <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-600" /> Terminée</span>
-        {showTasks ? <span>Les tasks utilisent une nuance claire de leur activité parente</span> : null}
-        <span className="text-red-600">│ J+0 = aujourd’hui</span>
-      </div>
-    </div>
-  );
-}
-
-function buildGanttRange(anchor: Date, scale: GanttScale) {
-  const normalized = new Date(anchor);
-  normalized.setHours(0, 0, 0, 0);
-
-  if (scale === "day") {
-    const rangeStart = addDays(normalized, -7);
-    const ticks = Array.from({ length: 21 }, (_, index) => {
-      const date = addDays(rangeStart, index);
-      return { key: formatDateOnly(date), date, label: new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "2-digit" }).format(date) };
-    });
-    return { rangeStart, rangeEnd: addDays(rangeStart, 20), ticks, cellWidth: 64, stepDays: 7 };
-  }
-
-  if (scale === "week") {
-    const rangeStart = startOfWeek(addDays(normalized, -35));
-    const ticks = Array.from({ length: 14 }, (_, index) => {
-      const date = addDays(rangeStart, index * 7);
-      return { key: formatDateOnly(date), date, label: `S${getIsoWeek(date)} · ${new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short" }).format(date)}` };
-    });
-    return { rangeStart, rangeEnd: addDays(rangeStart, 97), ticks, cellWidth: 96, stepDays: 28 };
-  }
-
-  if (scale === "month") {
-    const rangeStart = new Date(normalized.getFullYear(), normalized.getMonth() - 5, 1);
-    const ticks = Array.from({ length: 12 }, (_, index) => {
-      const date = new Date(rangeStart.getFullYear(), rangeStart.getMonth() + index, 1);
-      return { key: formatDateOnly(date), date, label: new Intl.DateTimeFormat("fr-FR", { month: "short", year: "2-digit" }).format(date) };
-    });
-    const rangeEnd = new Date(rangeStart.getFullYear(), rangeStart.getMonth() + 12, 0);
-    return { rangeStart, rangeEnd, ticks, cellWidth: 112, stepDays: 90 };
-  }
-
-  const rangeStart = new Date(normalized.getFullYear() - 2, 0, 1);
-  const ticks = Array.from({ length: 5 }, (_, index) => {
-    const date = new Date(rangeStart.getFullYear() + index, 0, 1);
-    return { key: formatDateOnly(date), date, label: String(date.getFullYear()) };
-  });
-  const rangeEnd = new Date(rangeStart.getFullYear() + 5, 0, 0);
-  return { rangeStart, rangeEnd, ticks, cellWidth: 230, stepDays: 365 };
 }
 
 function getIsoWeek(date: Date) {
