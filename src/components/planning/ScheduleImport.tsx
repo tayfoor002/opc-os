@@ -30,7 +30,8 @@ export function ScheduleImport({projectId, tasks, activities, onApplied}: {proje
       const parentId = parentMatches.length === 1 ? parentMatches[0].id : "";
       const candidates = tasks.filter(task => normalizeLabel(task.title) === normalizeLabel(row.title) && (!parentId || task.activity_id===parentId));
       const bound = mapped.get(row.key);
-      const target = bound && tasks.some(task => task.id===bound) ? bound : candidates.length===1 ? candidates[0].id : "";
+      const repeated = imported.filter(other => normalizeLabel(other.title) === normalizeLabel(row.title)).length > 1;
+      const target = bound && tasks.some(task => task.id===bound) ? bound : candidates.length===1 && !repeated ? candidates[0].id : "";
       return {...row,target,activityId:parentId,included:Boolean(target),warnings:[...row.warnings,...(candidates.length>1&&!bound ? ["Plusieurs tâches portent ce nom : choisis la correspondance."] : [])]};
     }));
     setLoadedSource(namespace);

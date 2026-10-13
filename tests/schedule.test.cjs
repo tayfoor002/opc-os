@@ -50,3 +50,19 @@ test('implicit row identities survive insertion and reordering',()=>{
   assert.equal(rowsFromMatrix([header,a,b])[0].key,rowsFromMatrix([header,b,a])[1].key);
   assert.equal(rowsFromPdfLines(['1 A 01/06/2026 02/06/2026'])[0].key,rowsFromPdfLines(['9 A 03/06/2026 04/06/2026'])[0].key);
 });
+
+test('Project PDF short years, weekdays and decimal durations are parsed',()=>{
+  const rows=rowsFromPdfLines(['4 Guérite 2.00 55 jrs Lun 31/08/26 Lun 19/10/26', '5 Béton 1,5 jrs? Jeu 03/09/26 Ven 04/09/26', '6 Béton 2 jrs Mar 01/09/26 Jeu 03/09/26']);
+  assert.equal(rows[0].start,'2026-08-31');assert.equal(rows[0].title,'Guérite 2.00');
+  assert.equal(rows[1].title,'Béton');assert.equal(rows[1].finish,'2026-09-04');
+  assert.equal(new Set(rows.map(row=>row.key)).size,3);
+  assert.ok(rows[2].warnings.some(w=>w.includes('répété')));
+  assert.equal(rowsFromPdfLines(['1 Invalid 31/02/26 03/03/26'])[0].start,'');
+});
+
+test('PDF groups mixed font baselines and excludes Gantt duplicates',()=>{
+  const item=(str,x,y,h=6)=>({str,transform:[1,0,0,1,x,y],height:h,width:10});
+  const lines=loaded.exports.pdfTextLines([item('Début',200,100),item('Fin',250,100),item('1',10,80),item('Béton',40,79.3),item('1 jr',150,79.3),item('Lun 31/08/26',200,79.3),item('Lun 31/08/26',250,79.3),item('Béton',450,81)]);
+  const rows=rowsFromPdfLines(lines);assert.equal(rows.length,1);assert.equal(rows[0].title,'Béton');
+  assert.equal(rows[0].finish,'2026-08-31');
+});

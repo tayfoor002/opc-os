@@ -69,14 +69,38 @@ export function rowsFromMatrix(matrix: unknown[][]): ScheduleRow[] {
 
 export function rowsFromPdfLines(lines: string[]): ScheduleRow[] {
   const rows: ScheduleRow[] = [];
+  const occurrences = new Map<string, number>();
   for (const line of lines) {
-    const matches = [...line.matchAll(/\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.\-]\d{1,2}[/.\-]\d{4})\b/g)];
+    const matches = [...line.matchAll(/\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.\-]\d{1,2}[/.\-](?:\d{4}|\d{2}))\b/g)];
     if (matches.length < 2) continue;
-    const title = line.slice(0, matches[0].index).replace(/^\s*\d+\s+/, "").replace(/\s+\d+\s*(?:jours?|days?|j)\s*$/i, "").trim();
+    const title = line.slice(0, matches[0].index).replace(/^\s*\d+\s+/, "").replace(/\s*(?:lun|mar|mer|jeu|ven|sam|dim)\.?\s*$/i, "").replace(/\s+\d+(?:[,.]\d+)?\s*(?:jours?|days?|jrs?|j)\??\s*$/i, "").trim();
     if (!title) continue;
-    rows.push({key: `pdf:${normalizeLabel(title)}`, title, start: readDate(matches[0][0]), finish: readDate(matches[1][0]), parent: "", predecessors: [], warnings: ["Extraction PDF : vérifier le libellé et les dates avec le document source."]});
+    const label = normalizeLabel(title);
+    const occurrence = (occurrences.get(label) ?? 0) + 1;
+    occurrences.set(label, occurrence);
+    const shortYear = /[/\.\-]\d{2}$/.test(matches[0][0]) && !/^\d{4}-/.test(matches[0][0]);
+    const pdfDate = (text: string) => readDate(text.replace(/^(\d{1,2}[/\.\-]\d{1,2}[/\.\-])(\d{2})$/, "$120$2"));
+    rows.push({key: `pdf:${label}${occurrence > 1 ? `:occurrence:${occurrence}` : ""}`, title, start: pdfDate(matches[0][0]), finish: pdfDate(matches[1][0]), parent: "", predecessors: [], warnings: ["Extraction PDF : vérifier le libellé et les dates avec le document source.", ...(shortYear ? ["Année sur deux chiffres interprétée entre 2000 et 2099 : vérifier les dates."] : []), ...(occurrence > 1 ? ["Libellé répété : vérifier le bâtiment et l’activité cible. Conserver l’ordre des occurrences lors des réimports."] : [])]});
   }
   return rows;
+}
+
+export type PdfTextItem = {str: string; transform: number[]; height: number; width: number};
+
+export function pdfTextLines(items: PdfTextItem[]): string[] {
+  // Limit MS Project exports to the table, excluding duplicate labels in the Gantt.
+  const finishHeader = items.find(item => normalizeLabel(item.str) === "fin");
+  const startHeader = items.find(item => normalizeLabel(item.str) === "debut" && finishHeader && Math.abs(item.transform[5] - finishHeader.transform[5]) < 2);
+  const rightEdge = startHeader && finishHeader ? finishHeader.transform[4] + (finishHeader.transform[4] - startHeader.transform[4]) : Infinity;
+  const groups: {y: number; items: PdfTextItem[]}[] = [];
+  for (const item of items.filter(item => item.str.trim() && item.transform[4] < rightEdge).sort((a,b) => b.transform[5] - a.transform[5])) {
+    const y = item.transform[5];
+    const last = groups.at(-1);
+    // Font baselines vary within one row. Fixed rounding split some rows in two.
+    if (last && Math.abs(last.y - y) <= Math.max(0.5, item.height * 0.25)) last.items.push(item);
+    else groups.push({y, items: [item]});
+  }
+  return groups.map(group => group.items.sort((a,b) => a.transform[4] - b.transform[4]).map(item => item.str).join(" "));
 }
 
 export function shiftDate(value: string, days: number) {

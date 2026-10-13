@@ -1,4 +1,4 @@
-import { rowsFromMatrix, rowsFromPdfLines, readDate, type ScheduleRow } from "./schedule";
+import { rowsFromMatrix, rowsFromPdfLines, pdfTextLines, readDate, type ScheduleRow } from "./schedule";
 
 export function parseProjectXml(text: string): ScheduleRow[] {
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) throw new Error("Les déclarations externes XML ne sont pas acceptées.");
@@ -46,14 +46,7 @@ export async function readScheduleFile(file: File): Promise<{rows: ScheduleRow[]
       const lines: string[] = [];
       for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex++) {
         const content = await (await pdf.getPage(pageIndex)).getTextContent();
-        const groups = new Map<number, {x: number; text: string}[]>();
-        for (const item of content.items) {
-          if (!("str" in item)) continue;
-          const y = Math.round(item.transform[5] / 3) * 3;
-          const group = groups.get(y) ?? [];
-          group.push({x: item.transform[4], text: item.str}); groups.set(y, group);
-        }
-        for (const [, items] of [...groups.entries()].sort((a,b) => b[0]-a[0])) lines.push(items.sort((a,b) => a.x-b.x).map(item => item.text).join(" "));
+        lines.push(...pdfTextLines(content.items.filter(item => "str" in item)));
       }
       rows = rowsFromPdfLines(lines);
       warnings.push("PDF : seules les lignes comportant un libellé suivi de deux dates explicites sont détectées. Les barres graphiques, scans, calendriers et dépendances ne sont pas convertis automatiquement.");
